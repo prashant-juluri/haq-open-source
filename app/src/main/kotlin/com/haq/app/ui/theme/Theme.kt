@@ -5,15 +5,25 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+// Brand colours
+val HaqGreen       = Color(0xFF1D6F42)   // mic button, active accents
+val HaqGreenDim    = Color(0xFF145230)   // pressed / container
+val HaqBackground  = Color(0xFF0D0D0D)   // full-screen background
+val HaqSurface     = Color(0xFF1A1A1A)   // response card
+val HaqOnSurface   = Color(0xFFE0E0E0)
+val HaqMuted       = Color(0xFF5C5C5C)   // placeholder / status text
+val HaqError       = Color(0xFFCF4444)   // error state
+
 private val HaqDarkColors = darkColorScheme(
-    primary          = Color(0xFF1E88E5),   // mic button blue
+    primary          = HaqGreen,
     onPrimary        = Color.White,
-    primaryContainer = Color(0xFF1565C0),
-    background       = Color(0xFF0A0A0A),
-    onBackground     = Color(0xFFE0E0E0),
-    surface          = Color(0xFF1A1A1A),
-    onSurface        = Color(0xFFE0E0E0),
-    error            = Color(0xFFE53935),   // mic active / alert red
+    primaryContainer = HaqGreenDim,
+    background       = HaqBackground,
+    onBackground     = HaqOnSurface,
+    surface          = HaqSurface,
+    onSurface        = HaqOnSurface,
+    surfaceVariant   = Color(0xFF222222),
+    error            = HaqError,
     onError          = Color.White,
 )
 
