@@ -15,13 +15,22 @@ object GemmaManager {
     val state: StateFlow<EngineState>
         get() = engine.state
 
+    /** Call once after [ModelDownloadManager] emits [DownloadState.Complete]. */
     fun init(context: Context) {
         if (::engine.isInitialized) return
+        engine = LiteRTEngine(context.applicationContext)
+    }
+
+    /** Tear down the current engine and create a fresh one (for error recovery). */
+    fun reinit(context: Context) {
+        if (::engine.isInitialized) engine.shutdown()
         engine = LiteRTEngine(context.applicationContext)
     }
 
     fun generateResponse(prompt: String): Flow<String> =
         engine.generateResponse(prompt)
 
-    fun shutdown() = engine.shutdown()
+    fun shutdown() {
+        if (::engine.isInitialized) engine.shutdown()
+    }
 }

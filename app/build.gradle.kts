@@ -117,4 +117,7 @@ dependencies {
 
     // ── Biometric (PIN + face fallback) ─────────────────────────────────────
     implementation("androidx.biometric:biometric:1.1.0")
+
+    // ── OkHttp — one-time model download over WiFi ───────────────────────────
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

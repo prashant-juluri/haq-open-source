@@ -3,8 +3,10 @@ package com.haq.app
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.haq.app.inference.DownloadState
 import com.haq.app.inference.EngineState
 import com.haq.app.inference.GemmaManager
+import com.haq.app.inference.ModelDownloadManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,7 +15,14 @@ import kotlinx.coroutines.launch
 
 class HaqViewModel(application: Application) : AndroidViewModel(application) {
 
-    val engineState: StateFlow<EngineState> by lazy { GemmaManager.state }
+    private val downloadManager = ModelDownloadManager(application)
+
+    // ── Exposed state ─────────────────────────────────────────────────────────
+
+    val downloadState: StateFlow<DownloadState> = downloadManager.downloadState
+
+    private val _engineState = MutableStateFlow<EngineState>(EngineState.Loading)
+    val engineState: StateFlow<EngineState> = _engineState.asStateFlow()
 
     private val _appState = MutableStateFlow(AppState.LOADING)
     val appState: StateFlow<AppState> = _appState.asStateFlow()
@@ -21,11 +30,30 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     private val _responseText = MutableStateFlow("")
     val responseText: StateFlow<String> = _responseText.asStateFlow()
 
-    init {
-        GemmaManager.init(application)
+    // ── Init ──────────────────────────────────────────────────────────────────
 
+    init {
+        startDownload()
+
+        // When download completes → initialise Gemma; mirror engine state to UI
         viewModelScope.launch {
-            engineState.collect { state ->
+            downloadState.collect { dl ->
+                if (dl is DownloadState.Complete) {
+                    GemmaManager.init(getApplication())
+                    observeEngineState()
+                }
+            }
+        }
+    }
+
+    private var engineObserving = false
+
+    private fun observeEngineState() {
+        if (engineObserving) return
+        engineObserving = true
+        viewModelScope.launch {
+            GemmaManager.state.collect { state ->
+                _engineState.value = state
                 _appState.value = when (state) {
                     is EngineState.Loading -> AppState.LOADING
                     is EngineState.Ready   -> AppState.READY
@@ -35,8 +63,20 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Actions ───────────────────────────────────────────────────────────────
+
+    fun retryDownload() {
+        viewModelScope.launch { downloadManager.startDownload() }
+    }
+
+    fun retryEngine() {
+        engineObserving = false
+        GemmaManager.reinit(getApplication())
+        observeEngineState()
+    }
+
     fun submitQuery(prompt: String) {
-        if (engineState.value !is EngineState.Ready) return
+        if (_engineState.value !is EngineState.Ready) return
 
         viewModelScope.launch {
             _appState.value = AppState.THINKING
@@ -55,6 +95,10 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 _appState.value = AppState.READY
             }
         }
+    }
+
+    private fun startDownload() {
+        viewModelScope.launch { downloadManager.startDownload() }
     }
 
     override fun onCleared() {

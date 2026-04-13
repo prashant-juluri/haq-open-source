@@ -144,5 +144,15 @@ response on-device, phone in airplane mode.
 
 ## Model
 - Model: Gemma 4 E2B via LiteRT-LM (on-device, offline)
-- Model file: app/src/main/assets/gemma-4-E2B-it.litertlm
+- Model file: `gemma-4-E2B-it.litertlm` stored in `context.filesDir` at runtime
 - Format: .litertlm (LiteRT-LM framework, not legacy .task format)
+- The model is NOT bundled in the APK (2.4 GB is too large)
+
+## Model delivery
+- On first launch, `ModelDownloadManager` checks if the model exists in `filesDir`
+- If missing, it requires WiFi and downloads from S3 with progress reporting
+- Download URL: `https://haq-model-assets.s3.amazonaws.com/gemma-4-E2B-it.litertlm`
+- Uses an atomic temp-file rename to avoid partial writes
+- INTERNET permission is the ONE exception to the no-network rule; it exists only for this download
+- After download completes, all inference runs fully offline
+- Do NOT suggest bundling the model in assets or requiring adb push

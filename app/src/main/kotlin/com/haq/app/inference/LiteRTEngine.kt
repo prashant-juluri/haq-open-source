@@ -91,20 +91,12 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
 
     /**
      * Returns the absolute path to the model in filesDir.
-     * The model is NOT bundled in the APK — push it once before first run:
-     *
-     *   adb push app/src/main/assets/gemma-4-E2B-it.litertlm \
-     *       /data/data/com.haq.app/files/gemma-4-E2B-it.litertlm
+     * [ModelDownloadManager] is responsible for placing the file here before
+     * [LiteRTEngine] is initialised.
      */
     private fun modelFilePath(): String {
         val f = File(context.filesDir, MODEL_ASSET)
-        if (!f.exists()) {
-            error(
-                "Model not found at ${f.absolutePath}. " +
-                "Push it with: adb push gemma-4-E2B-it.litertlm " +
-                "/data/data/com.haq.app/files/gemma-4-E2B-it.litertlm"
-            )
-        }
+        if (!f.exists()) error("Model not downloaded yet")
         return f.absolutePath
     }
 

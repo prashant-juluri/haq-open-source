@@ -2,9 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        NO INTERNET permission — Haq is fully offline by design.
-        Core features must work in airplane mode at all times.
+        INTERNET is the ONE exception to the no-network rule.
+        It is used solely for the one-time first-launch model download.
+        All inference is offline. Core features work in airplane mode.
     -->
+    <!-- One-time model download only. All inference is offline. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- WiFi check before download (ConnectivityManager) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Whisper STT: microphone access -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
