@@ -2,7 +2,7 @@
 <resources>
     <!-- Base theme — Compose handles all styling; this just sets the window background
          so there's no white flash before the first frame is drawn. -->
-    <style name="Theme.Haq" parent="android:Theme.Material.NoTitleBar">
+    <style name="Theme.Haq" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/background</item>
         <item name="android:statusBarColor">@color/background</item>
         <item name="android:navigationBarColor">@color/background</item>
