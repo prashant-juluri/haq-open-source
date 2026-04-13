@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -35,29 +36,36 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.haq.app.inference.EngineState
 import com.haq.app.ui.theme.HaqGreen
 import com.haq.app.ui.theme.HaqMuted
 import com.haq.app.ui.theme.HaqTheme
 
-// App states — drives the status indicator and mic appearance
+// Hardcoded test prompt for Week 1 — replaced by Whisper STT in next session
+private const val TEST_PROMPT =
+    "मुझे बताओ कि SC परिवारों के लिए कौन सी सरकारी योजनाएं हैं"
+
+// ── App states ────────────────────────────────────────────────────────────────
+
 enum class AppState(val label: String) {
+    LOADING("Loading Haq…"),
     READY("Ready"),
     LISTENING("Listening…"),
     THINKING("Thinking…"),
-    ERROR("Error — tap to retry"),
+    ERROR("Error"),
 }
+
+// ── Activity ──────────────────────────────────────────────────────────────────
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,10 +79,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// ── Root screen ───────────────────────────────────────────────────────────────
+
 @Composable
-fun HaqScreen() {
-    var appState by remember { mutableStateOf(AppState.READY) }
-    var responseText by remember { mutableStateOf("") }
+fun HaqScreen(vm: HaqViewModel = viewModel()) {
+    val appState   by vm.appState.collectAsStateWithLifecycle()
+    val engineState by vm.engineState.collectAsStateWithLifecycle()
+    val responseText by vm.responseText.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -84,25 +95,20 @@ fun HaqScreen() {
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-
-        // ── Status indicator ─────────────────────────────────────────────────
-        StatusBar(appState = appState)
+        StatusBar(appState = appState, engineState = engineState)
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // ── Microphone button ────────────────────────────────────────────────
         MicButton(
             appState = appState,
-            onClick = {
-                appState = if (appState == AppState.LISTENING) AppState.READY
-                           else AppState.LISTENING
-            },
+            onClick = { vm.submitQuery(TEST_PROMPT) },
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
         Text(
             text = when (appState) {
+                AppState.LOADING   -> "Loading model…"
                 AppState.READY     -> "Tap to speak"
                 AppState.LISTENING -> "Tap to stop"
                 AppState.THINKING  -> "Processing…"
@@ -115,27 +121,33 @@ fun HaqScreen() {
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // ── Response card ────────────────────────────────────────────────────
         ResponseCard(responseText = responseText)
 
         Spacer(modifier = Modifier.height(36.dp))
     }
 }
 
-// ── Status bar ───────────────────────────────────────────────────────────────
+// ── Status bar ────────────────────────────────────────────────────────────────
 
 @Composable
-private fun StatusBar(appState: AppState) {
+private fun StatusBar(appState: AppState, engineState: EngineState) {
     val dotColor by animateColorAsState(
         targetValue = when (appState) {
+            AppState.LOADING   -> HaqMuted
             AppState.READY     -> HaqGreen
-            AppState.LISTENING -> Color(0xFFFFB300)   // amber while recording
-            AppState.THINKING  -> Color(0xFF42A5F5)   // blue while Gemma works
+            AppState.LISTENING -> Color(0xFFFFB300)
+            AppState.THINKING  -> Color(0xFF42A5F5)
             AppState.ERROR     -> MaterialTheme.colorScheme.error
         },
         animationSpec = tween(300),
         label = "dotColor",
     )
+
+    val statusLabel = when {
+        appState == AppState.ERROR && engineState is EngineState.Error ->
+            "Error: ${(engineState as EngineState.Error).message}"
+        else -> appState.label
+    }
 
     Box(
         modifier = Modifier
@@ -146,80 +158,87 @@ private fun StatusBar(appState: AppState) {
         androidx.compose.foundation.layout.Row(
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Coloured status dot
-            Box(
-                modifier = Modifier
-                    .size(7.dp)
-                    .background(color = dotColor, shape = CircleShape),
-            )
+            if (appState == AppState.LOADING) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(10.dp),
+                    color = HaqMuted,
+                    strokeWidth = 1.5.dp,
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .background(color = dotColor, shape = CircleShape),
+                )
+            }
 
             Spacer(modifier = Modifier.size(8.dp))
 
             Text(
-                text = appState.label,
+                text = statusLabel,
                 color = HaqMuted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 1.sp,
                 fontFamily = FontFamily.Monospace,
+                maxLines = 1,
             )
         }
     }
 }
 
-// ── Microphone button ─────────────────────────────────────────────────────────
+// ── Mic button ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun MicButton(appState: AppState, onClick: () -> Unit) {
-    val isListening = appState == AppState.LISTENING
+    val isActive = appState == AppState.LISTENING || appState == AppState.THINKING
+    val isEnabled = appState == AppState.READY || appState == AppState.LISTENING
 
-    // Pulse ring while listening
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = 1.18f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900),
-            repeatMode = RepeatMode.Reverse,
-        ),
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "pulseScale",
     )
 
     val micSize by animateDpAsState(
-        targetValue = if (isListening) 96.dp else 88.dp,
+        targetValue = if (isActive) 96.dp else 88.dp,
         animationSpec = tween(200),
         label = "micSize",
     )
 
+    val containerColor by animateColorAsState(
+        targetValue = when (appState) {
+            AppState.LOADING   -> HaqMuted
+            AppState.THINKING  -> Color(0xFF42A5F5)
+            else               -> HaqGreen
+        },
+        animationSpec = tween(300),
+        label = "micBgColor",
+    )
+
     Box(contentAlignment = Alignment.Center) {
-        // Outer pulse ring — only rendered while listening
-        if (isListening) {
+        if (isActive) {
             Box(
                 modifier = Modifier
                     .size(micSize)
                     .scale(pulseScale)
-                    .border(
-                        width = 2.dp,
-                        color = HaqGreen.copy(alpha = 0.35f),
-                        shape = CircleShape,
-                    ),
+                    .border(2.dp, HaqGreen.copy(alpha = 0.35f), CircleShape),
             )
         }
 
         FloatingActionButton(
-            onClick = onClick,
+            onClick = { if (isEnabled) onClick() },
             modifier = Modifier.size(micSize),
             shape = CircleShape,
-            containerColor = HaqGreen,
+            containerColor = containerColor,
             contentColor = Color.White,
-            elevation = FloatingActionButtonDefaults.elevation(
-                defaultElevation = 10.dp,
-                pressedElevation = 14.dp,
-            ),
+            elevation = FloatingActionButtonDefaults.elevation(10.dp, 14.dp),
         ) {
             Icon(
                 imageVector = Icons.Filled.Mic,
-                contentDescription = if (isListening) "Stop listening" else "Start listening",
+                contentDescription = if (isActive) "Stop" else "Speak",
                 modifier = Modifier.size(40.dp),
             )
         }
@@ -254,16 +273,4 @@ private fun ResponseCard(responseText: String) {
             )
         }
     }
-}
-
-// ── Preview ───────────────────────────────────────────────────────────────────
-
-@Preview(
-    showBackground = true,
-    backgroundColor = 0xFF0D0D0D,
-    showSystemUi = true,
-)
-@Composable
-private fun HaqScreenPreview() {
-    HaqTheme { HaqScreen() }
 }

@@ -34,15 +34,44 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // litertlm-android:0.10.0 was compiled with Kotlin 2.3; allow reading
+        // its metadata without failing the build on version mismatch.
+        freeCompilerArgs += listOf("-Xskip-metadata-version-check")
     }
 
     buildFeatures {
         compose = true
     }
 
-    // Keep model assets out of compression so LiteRT can mmap them directly
+    // .litertlm files must not be compressed so LiteRT can mmap them.
+    // The model is NOT bundled in the APK (>2 GB); see push instructions below.
     androidResources {
-        noCompress += listOf("tflite", "onnx", "bin", "task")
+        noCompress += listOf("litertlm", "onnx", "bin")
+    }
+}
+
+// ── Exclude model files from the APK ──────────────────────────────────────────
+// Bundling a >2 GB model inside an APK is impractical. Instead, push the model
+// directly to the device once and the app reads it from filesDir at runtime.
+//
+// One-time setup (replace the package path if you change applicationId):
+//   adb push app/src/main/assets/gemma-4-E2B-it.litertlm \
+//       /data/data/com.haq.app/files/gemma-4-E2B-it.litertlm
+//
+// This hook removes *.litertlm from the merged-assets output so that
+// compressDebugAssets / compressReleaseAssets never see the file.
+tasks.whenTaskAdded {
+    if (name.startsWith("merge") && name.endsWith("Assets") && "Test" !in name) {
+        doLast {
+            outputs.files.forEach { dir ->
+                if (dir.isDirectory) {
+                    fileTree(dir) { include("**/*.litertlm") }.forEach { f ->
+                        println("Haq build: excluding ${f.name} from APK — push via adb")
+                        f.delete()
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -57,13 +86,17 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // ── LiteRT / Gemma on-device inference ──────────────────────────────────
-    // MediaPipe Tasks GenAI wraps LiteRT and exposes the LlmInference API
-    // used to run Gemma 4 E4B .task files on-device.
-    implementation("com.google.mediapipe:tasks-genai:0.10.22")
+    // Lifecycle — ViewModel + viewModelScope + collectAsStateWithLifecycle
+    val lifecycleVersion = "2.8.4"
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:$lifecycleVersion")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:$lifecycleVersion")
+
+    // ── LiteRT-LM — on-device Gemma inference via .litertlm format ──────────
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
 
     // ── Whisper STT via ONNX Runtime ────────────────────────────────────────
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
@@ -74,16 +107,11 @@ dependencies {
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
 
-    // ── sqlite-vec (vector similarity search) ───────────────────────────────
-    // sqlite-vec is loaded as a native SQLite extension at runtime via
-    // SupportSQLiteOpenHelper. Add the prebuilt .aar to app/libs/ for each
-    // target ABI once you compile from: https://github.com/asg017/sqlite-vec
+    // ── sqlite-vec (loaded as native extension at runtime) ───────────────────
+    // Add prebuilt .aar to app/libs/ per target ABI when ready
     // implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 
     // ── ML Kit on-device OCR ─────────────────────────────────────────────────
-    // Latin (form field labels) + Devanagari (Hindi documents)
-    // Telugu/Tamil OCR: ML Kit does not yet ship Dravidian-script models;
-    // revisit when available or use Tesseract via JNI as fallback.
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
 

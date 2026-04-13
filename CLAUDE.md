@@ -121,6 +121,13 @@ Every Gemma response must follow this structure:
 5. ACTION — next step the user must take
 6. HELPLINE — phone number to call
 
+## Inference abstraction
+Wrap all model calls behind an InferenceEngine interface.
+The hackathon implementation is LiteRTEngine using the bundled
+.litertlm file. Post-hackathon this swaps to ML Kit GenAI
+Prompt API / AICore without touching any other code.
+Never call LiteRT APIs directly from ViewModel or UI layer.
+
 ## Current build stage
 WEEK 1 — Getting Gemma + Whisper running on Android in airplane mode.
 End of week milestone: speak a question in Hindi, get a Gemma 
@@ -132,3 +139,10 @@ response on-device, phone in airplane mode.
 - Python (app is Kotlin only)
 - Solutions requiring internet for core functionality
 - Separate translation APIs (Gemma handles multilingual natively)
+- Loading the model from external storage or downloading on first run
+- The .task format — the correct format is .litertlm
+
+## Model
+- Model: Gemma 4 E2B via LiteRT-LM (on-device, offline)
+- Model file: app/src/main/assets/gemma-4-E2B-it.litertlm
+- Format: .litertlm (LiteRT-LM framework, not legacy .task format)
