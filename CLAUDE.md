@@ -151,7 +151,7 @@ response on-device, phone in airplane mode.
 ## Model delivery
 - On first launch, `ModelDownloadManager` checks if the model exists in `filesDir`
 - If missing, it requires WiFi and downloads from S3 with progress reporting
-- Download URL: `https://haq-model-assets.s3.amazonaws.com/gemma-4-E2B-it.litertlm`
+- Download URL: `https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm`
 - Uses an atomic temp-file rename to avoid partial writes
 - INTERNET permission is the ONE exception to the no-network rule; it exists only for this download
 - After download completes, all inference runs fully offline

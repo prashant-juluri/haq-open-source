@@ -126,6 +126,6 @@ class ModelDownloadManager(private val context: Context) {
 
         // Placeholder — replace with final CDN URL before shipping
         private const val MODEL_DOWNLOAD_URL =
-            "https://haq-model-assets.s3.amazonaws.com/gemma-4-E2B-it.litertlm"
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
     }
 }
