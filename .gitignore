@@ -1,0 +1,29 @@
+# Gradle
+.gradle/
+build/
+app/build/
+**/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+local.properties
+
+# Keystore files (never commit)
+*.jks
+*.keystore
+
+# Model assets (too large for git — ship via release pipeline)
+app/src/main/assets/*.task
+app/src/main/assets/*.onnx
+app/src/main/assets/*.bin
+app/src/main/assets/*.tflite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
