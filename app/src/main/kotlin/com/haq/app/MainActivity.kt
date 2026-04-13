@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
 // ── Root screen — routes between download, loading, and app states ────────────
 
 @Composable
-fun HaqScreen(vm: HaqViewModel = viewModel()) {
+fun HaqScreen(vm: HaqViewModel = viewModel()) {     
     val downloadState  by vm.downloadState.collectAsStateWithLifecycle()
     val engineState    by vm.engineState.collectAsStateWithLifecycle()
     val appState       by vm.appState.collectAsStateWithLifecycle()
