@@ -98,9 +98,6 @@ dependencies {
     // ── LiteRT-LM — on-device Gemma inference via .litertlm format ──────────
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
 
-    // ── Whisper Tiny STT via ONNX Runtime ───────────────────────────────────
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
-
     // ── Room (SQLite) ────────────────────────────────────────────────────────
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")

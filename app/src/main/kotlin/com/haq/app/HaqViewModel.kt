@@ -32,13 +32,9 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     private val _responseText = MutableStateFlow("")
     val responseText: StateFlow<String> = _responseText.asStateFlow()
 
-    // Preferred language for STT — "hi" until user profile is implemented
-    private val preferredLanguage = "hi"
-
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
-        STTManager.init(application)
         startDownload()
 
         viewModelScope.launch {
@@ -81,8 +77,11 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Records 10 s via Whisper Tiny → transcribes text → submits to Gemma.
-     * Whisper sessions are closed before Gemma runs to free ~144 MB of RAM.
+     * Listens via the on-device SpeechRecognizer, then pipes the transcript
+     * directly into Gemma. The UI shows Gemma's streamed response, not the
+     * raw transcript.
+     *
+     * Must be called from the main thread — viewModelScope satisfies that.
      */
     fun onMicButtonPressed() {
         if (_engineState.value !is EngineState.Ready) return
@@ -91,23 +90,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _appState.value = AppState.LISTENING
             try {
-                Log.d("Haq/STT", "Recording started")
-                val transcript = STTManager.recordAndTranscribe(preferredLanguage)
-                Log.d("Haq/STT", "Transcript: \"$transcript\" (blank=${transcript.isBlank()})")
-
-                when {
-                    transcript == "ERROR_OOM" -> {
-                        Log.e("Haq/STT", "OOM during Whisper — returning to READY")
-                        _appState.value = AppState.READY
-                    }
-                    transcript.isNotBlank() -> submitQuery(transcript)
-                    else -> {
-                        Log.d("Haq/STT", "Blank transcript — nothing to submit")
-                        _appState.value = AppState.READY
-                    }
+                val transcript = STTManager.recognize(getApplication())
+                Log.d("Haq/STT", "Transcript: \"$transcript\"")
+                if (transcript.isNotBlank()) {
+                    submitQuery(transcript)
+                } else {
+                    _appState.value = AppState.READY
                 }
             } catch (e: Exception) {
-                Log.e("Haq/STT", "Error: ${e::class.simpleName}: ${e.message}", e)
+                Log.e("Haq/STT", "Recognition error: ${e.message}")
                 _appState.value = AppState.READY
             }
         }
@@ -137,6 +128,5 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         GemmaManager.shutdown()
-        STTManager.shutdown()
     }
 }

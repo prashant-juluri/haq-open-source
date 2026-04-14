@@ -89,11 +89,6 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /**
-     * Returns the absolute path to the model in filesDir.
-     * [ModelDownloadManager] is responsible for placing the file here before
-     * [LiteRTEngine] is initialised.
-     */
     private fun modelFilePath(): String {
         val f = File(context.filesDir, MODEL_ASSET)
         if (!f.exists()) error("Model not downloaded yet")
