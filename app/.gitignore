@@ -3,4 +3,3 @@
 # Model files — large binaries, never commit; ship via release pipeline
 src/main/assets/*.litertlm
 src/main/assets/*.bin
-src/main/assets/whisper/*.onnx

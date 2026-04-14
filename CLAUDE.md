@@ -18,7 +18,7 @@ Tagline: Your rights. Your language. No middleman.
 ## Tech stack
 - Language: Kotlin + Jetpack Compose
 - Model: Gemma 4 E4B via LiteRT (on-device, offline)
-- STT: Whisper Small via ONNX (on-device, offline, multilingual)
+- STT: Audio recorded as WAV via AudioRecorder, passed directly to Gemma 4 E2B via InputData.Audio — no separate STT model required
 - TTS: Android TTS API
 - Storage: SQLite via Room
 - Vector search: sqlite-vec
@@ -129,9 +129,9 @@ Prompt API / AICore without touching any other code.
 Never call LiteRT APIs directly from ViewModel or UI layer.
 
 ## Current build stage
-WEEK 2 — Whisper STT integrated, voice → Gemma pipeline complete.
+WEEK 2 — Direct audio → Gemma pipeline complete. Whisper eliminated.
 End of week milestone: tap mic, speak in Hindi/Telugu/Tamil,
-Whisper transcribes on-device, Gemma responds on-device, fully offline.
+WAV audio passed directly to Gemma via InputData.Audio, fully offline.
 
 ## Do not suggest
 - Any cloud-based model inference
