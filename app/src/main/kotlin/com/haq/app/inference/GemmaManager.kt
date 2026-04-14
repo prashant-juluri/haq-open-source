@@ -3,7 +3,6 @@ package com.haq.app.inference
 import android.content.Context
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
-import java.io.File
 
 /**
  * The only inference entry point for the rest of the app.
@@ -30,9 +29,6 @@ object GemmaManager {
 
     fun generateResponse(prompt: String): Flow<String> =
         engine.generateResponse(prompt)
-
-    fun generateResponseFromAudio(audioFile: File): Flow<String> =
-        engine.generateResponseFromAudio(audioFile)
 
     fun shutdown() {
         if (::engine.isInitialized) engine.shutdown()

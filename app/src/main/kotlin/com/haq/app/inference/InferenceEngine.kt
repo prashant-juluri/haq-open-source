@@ -2,7 +2,6 @@ package com.haq.app.inference
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
-import java.io.File
 
 sealed class EngineState {
     object Loading : EngineState()
@@ -18,5 +17,4 @@ sealed class EngineState {
 interface InferenceEngine {
     val state: StateFlow<EngineState>
     fun generateResponse(prompt: String): Flow<String>
-    fun generateResponseFromAudio(audioFile: File): Flow<String>
 }

@@ -1,6 +1,7 @@
 package com.haq.app
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.haq.app.inference.DownloadState
@@ -8,7 +9,6 @@ import com.haq.app.inference.EngineState
 import com.haq.app.inference.GemmaManager
 import com.haq.app.inference.ModelDownloadManager
 import com.haq.app.stt.STTManager
-import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,13 +32,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     private val _responseText = MutableStateFlow("")
     val responseText: StateFlow<String> = _responseText.asStateFlow()
 
+    // Preferred language for STT — "hi" until user profile is implemented
+    private val preferredLanguage = "hi"
+
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
         STTManager.init(application)
         startDownload()
 
-        // When download completes → initialise Gemma; mirror engine state to UI
         viewModelScope.launch {
             downloadState.collect { dl ->
                 if (dl is DownloadState.Complete) {
@@ -78,7 +80,10 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         observeEngineState()
     }
 
-    /** Records 10 s of audio then passes the WAV file directly to Gemma. */
+    /**
+     * Records 10 s via Whisper Tiny → transcribes text → submits to Gemma.
+     * Whisper sessions are closed before Gemma runs to free ~144 MB of RAM.
+     */
     fun onMicButtonPressed() {
         if (_engineState.value !is EngineState.Ready) return
         if (_appState.value != AppState.READY) return
@@ -87,27 +92,41 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             _appState.value = AppState.LISTENING
             try {
                 Log.d("Haq/STT", "Recording started")
-                val audioFile = STTManager.recordAndGetFile()
-                Log.d("Haq/STT", "Recording complete: ${audioFile.length()} bytes → passing to Gemma")
+                val transcript = STTManager.recordAndTranscribe(preferredLanguage)
+                Log.d("Haq/STT", "Transcript: \"$transcript\" (blank=${transcript.isBlank()})")
 
-                _appState.value = AppState.THINKING
-                _responseText.value = ""
-
-                GemmaManager.generateResponseFromAudio(audioFile)
-                    .catch { e ->
-                        Log.e("Haq/STT", "Gemma audio inference error: ${e.message}", e)
-                        _responseText.value += "\n\n[Error: ${e.message}]"
-                        _appState.value = AppState.ERROR
+                when {
+                    transcript == "ERROR_OOM" -> {
+                        Log.e("Haq/STT", "OOM during Whisper — returning to READY")
+                        _appState.value = AppState.READY
                     }
-                    .collect { token -> _responseText.value += token }
-
-                if (_appState.value == AppState.THINKING) {
-                    _appState.value = AppState.READY
+                    transcript.isNotBlank() -> submitQuery(transcript)
+                    else -> {
+                        Log.d("Haq/STT", "Blank transcript — nothing to submit")
+                        _appState.value = AppState.READY
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("Haq/STT", "Recording failed: ${e::class.simpleName}: ${e.message}", e)
+                Log.e("Haq/STT", "Error: ${e::class.simpleName}: ${e.message}", e)
                 _appState.value = AppState.READY
             }
+        }
+    }
+
+    private fun submitQuery(prompt: String) {
+        viewModelScope.launch {
+            _appState.value = AppState.THINKING
+            _responseText.value = ""
+
+            GemmaManager.generateResponse(prompt)
+                .catch { e ->
+                    Log.e("Haq/Gemma", "Inference error: ${e.message}", e)
+                    _responseText.value += "\n\n[Error: ${e.message}]"
+                    _appState.value = AppState.ERROR
+                }
+                .collect { token -> _responseText.value += token }
+
+            if (_appState.value == AppState.THINKING) _appState.value = AppState.READY
         }
     }
 
@@ -118,5 +137,6 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         GemmaManager.shutdown()
+        STTManager.shutdown()
     }
 }

@@ -46,7 +46,7 @@ android {
     // .litertlm files must not be compressed so LiteRT can mmap them.
     // The model is NOT bundled in the APK (>2 GB); see push instructions below.
     androidResources {
-        noCompress += listOf("litertlm", "bin")
+        noCompress += listOf("litertlm", "onnx", "bin")
     }
 }
 
@@ -97,6 +97,9 @@ dependencies {
 
     // ── LiteRT-LM — on-device Gemma inference via .litertlm format ──────────
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
+
+    // ── Whisper Tiny STT via ONNX Runtime ───────────────────────────────────
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
 
     // ── Room (SQLite) ────────────────────────────────────────────────────────
     val roomVersion = "2.6.1"

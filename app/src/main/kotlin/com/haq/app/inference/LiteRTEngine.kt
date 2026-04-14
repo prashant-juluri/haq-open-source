@@ -82,48 +82,6 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
         }
     }.flowOn(Dispatchers.IO)
 
-    /**
-     * Passes a WAV [audioFile] directly to Gemma as [InputData.Audio] alongside
-     * the system prompt, then streams response tokens.  Deletes the temp file
-     * once the session completes or errors.
-     */
-    override fun generateResponseFromAudio(audioFile: File): Flow<String> = callbackFlow {
-        val eng = engine ?: run {
-            audioFile.delete()
-            close(IllegalStateException("Engine not ready"))
-            return@callbackFlow
-        }
-
-        val audioBytes = audioFile.readBytes()
-        val session: Session = eng.createSession(SessionConfig())
-        val inputs = listOf(
-            InputData.Text(SYSTEM_PROMPT),
-            InputData.Audio(audioBytes),
-        )
-
-        session.generateContentStream(inputs, object : ResponseCallback {
-            override fun onNext(token: String) {
-                if (token.isNotEmpty()) trySend(token)
-            }
-            override fun onDone() {
-                session.close()
-                audioFile.delete()
-                close()
-            }
-            override fun onError(e: Throwable) {
-                session.close()
-                audioFile.delete()
-                close(e)
-            }
-        })
-
-        awaitClose {
-            session.cancelProcess()
-            session.close()
-            audioFile.delete()
-        }
-    }.flowOn(Dispatchers.IO)
-
     fun shutdown() {
         engine?.close()
         engineScope.cancel()
