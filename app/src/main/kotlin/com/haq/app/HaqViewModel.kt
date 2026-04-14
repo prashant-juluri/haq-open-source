@@ -7,6 +7,7 @@ import com.haq.app.inference.DownloadState
 import com.haq.app.inference.EngineState
 import com.haq.app.inference.GemmaManager
 import com.haq.app.inference.ModelDownloadManager
+import com.haq.app.stt.STTManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,9 +31,13 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     private val _responseText = MutableStateFlow("")
     val responseText: StateFlow<String> = _responseText.asStateFlow()
 
+    // Preferred language for STT — "hi" until user profile is implemented
+    private val preferredLanguage = "hi"
+
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
+        STTManager.init(application)
         startDownload()
 
         // When download completes → initialise Gemma; mirror engine state to UI
@@ -75,9 +80,27 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         observeEngineState()
     }
 
-    fun submitQuery(prompt: String) {
+    /** Called when the user taps the mic button. Records 10 s then queries Gemma. */
+    fun onMicButtonPressed() {
         if (_engineState.value !is EngineState.Ready) return
+        if (_appState.value != AppState.READY) return
 
+        viewModelScope.launch {
+            _appState.value = AppState.LISTENING
+            try {
+                val transcript = STTManager.recordAndTranscribe(preferredLanguage)
+                if (transcript.isNotBlank()) {
+                    submitQuery(transcript)
+                } else {
+                    _appState.value = AppState.READY
+                }
+            } catch (e: Exception) {
+                _appState.value = AppState.READY
+            }
+        }
+    }
+
+    private fun submitQuery(prompt: String) {
         viewModelScope.launch {
             _appState.value = AppState.THINKING
             _responseText.value = ""
@@ -104,5 +127,6 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         GemmaManager.shutdown()
+        STTManager.shutdown()
     }
 }

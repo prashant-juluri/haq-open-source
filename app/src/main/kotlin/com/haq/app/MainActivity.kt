@@ -1,9 +1,12 @@
 package com.haq.app
 
+import android.Manifest
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -39,7 +42,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -56,10 +63,7 @@ import com.haq.app.inference.EngineState
 import com.haq.app.ui.theme.HaqGreen
 import com.haq.app.ui.theme.HaqMuted
 import com.haq.app.ui.theme.HaqTheme
-
-// Hardcoded test prompt — replaced by Whisper STT in next session
-private const val TEST_PROMPT =
-    "मुझे बताओ कि SC परिवारों के लिए कौन सी सरकारी योजनाएं हैं"
+import kotlinx.coroutines.delay
 
 enum class AppState(val label: String) {
     LOADING("Loading Haq…"),
@@ -77,14 +81,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ── Root screen — routes between download, loading, and app states ────────────
+// ── Root screen ───────────────────────────────────────────────────────────────
 
 @Composable
-fun HaqScreen(vm: HaqViewModel = viewModel()) {     
-    val downloadState  by vm.downloadState.collectAsStateWithLifecycle()
-    val engineState    by vm.engineState.collectAsStateWithLifecycle()
-    val appState       by vm.appState.collectAsStateWithLifecycle()
-    val responseText   by vm.responseText.collectAsStateWithLifecycle()
+fun HaqScreen(vm: HaqViewModel = viewModel()) {
+    val downloadState by vm.downloadState.collectAsStateWithLifecycle()
+    val engineState   by vm.engineState.collectAsStateWithLifecycle()
+    val appState      by vm.appState.collectAsStateWithLifecycle()
+    val responseText  by vm.responseText.collectAsStateWithLifecycle()
 
     Box(
         modifier = Modifier
@@ -93,31 +97,24 @@ fun HaqScreen(vm: HaqViewModel = viewModel()) {
         contentAlignment = Alignment.Center,
     ) {
         when {
-            // ── Download not yet complete ───────────────────────────────────
             downloadState !is DownloadState.Complete ->
-                DownloadScreen(
-                    state = downloadState,
-                    onCheckAgain = { vm.retryDownload() },
-                )
+                DownloadScreen(state = downloadState, onCheckAgain = { vm.retryDownload() })
 
-            // ── Engine initialising after download ──────────────────────────
             engineState is EngineState.Loading ->
                 FullScreenSpinner(label = "Loading Haq…")
 
-            // ── Engine error ────────────────────────────────────────────────
             engineState is EngineState.Error ->
                 ErrorScreen(
                     message = (engineState as EngineState.Error).message,
-                    onRetry = { vm.retryEngine() },
+                    onRetry  = { vm.retryEngine() },
                 )
 
-            // ── Normal app UI ───────────────────────────────────────────────
             else ->
                 AppContent(
-                    appState = appState,
-                    engineState = engineState,
+                    appState     = appState,
+                    engineState  = engineState,
                     responseText = responseText,
-                    onMicTap = { vm.submitQuery(TEST_PROMPT) },
+                    onMicTap     = { vm.onMicButtonPressed() },
                 )
         }
     }
@@ -162,9 +159,7 @@ private fun DownloadScreen(state: DownloadState, onCheckAgain: () -> Unit) {
                 Button(
                     onClick = onCheckAgain,
                     colors = ButtonDefaults.buttonColors(containerColor = HaqGreen),
-                ) {
-                    Text("Check again")
-                }
+                ) { Text("Check again") }
             }
 
             is DownloadState.Downloading -> {
@@ -182,17 +177,9 @@ private fun DownloadScreen(state: DownloadState, onCheckAgain: () -> Unit) {
                     trackColor = MaterialTheme.colorScheme.surface,
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "This is a one-time download of 2.4 GB",
-                    color = HaqMuted,
-                    fontSize = 13.sp,
-                )
+                Text("This is a one-time download of 2.4 GB", color = HaqMuted, fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Please keep the app open and stay on WiFi",
-                    color = HaqMuted,
-                    fontSize = 13.sp,
-                )
+                Text("Please keep the app open and stay on WiFi", color = HaqMuted, fontSize = 13.sp)
             }
 
             is DownloadState.Error -> {
@@ -213,9 +200,7 @@ private fun DownloadScreen(state: DownloadState, onCheckAgain: () -> Unit) {
                 Button(
                     onClick = onCheckAgain,
                     colors = ButtonDefaults.buttonColors(containerColor = HaqGreen),
-                ) {
-                    Text("Retry")
-                }
+                ) { Text("Retry") }
             }
 
             is DownloadState.Complete -> { /* routed away in HaqScreen */ }
@@ -223,7 +208,7 @@ private fun DownloadScreen(state: DownloadState, onCheckAgain: () -> Unit) {
     }
 }
 
-// ── Full-screen spinner (engine loading) ─────────────────────────────────────
+// ── Full-screen spinner ───────────────────────────────────────────────────────
 
 @Composable
 private fun FullScreenSpinner(label: String) {
@@ -252,9 +237,7 @@ private fun ErrorScreen(message: String, onRetry: () -> Unit) {
         Button(
             onClick = onRetry,
             colors = ButtonDefaults.buttonColors(containerColor = HaqGreen),
-        ) {
-            Text("Retry")
-        }
+        ) { Text("Retry") }
     }
 }
 
@@ -267,6 +250,12 @@ private fun AppContent(
     responseText: String,
     onMicTap: () -> Unit,
 ) {
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) onMicTap()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -278,7 +267,10 @@ private fun AppContent(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        MicButton(appState = appState, onClick = onMicTap)
+        MicButton(
+            appState = appState,
+            onClick  = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+        )
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -286,13 +278,14 @@ private fun AppContent(
             text = when (appState) {
                 AppState.LOADING   -> "Loading model…"
                 AppState.READY     -> "Tap to speak"
-                AppState.LISTENING -> "Tap to stop"
+                AppState.LISTENING -> "Speak now — recording stops automatically"
                 AppState.THINKING  -> "Processing…"
                 AppState.ERROR     -> "Something went wrong"
             },
             color = HaqMuted,
             fontSize = 13.sp,
             letterSpacing = 0.5.sp,
+            textAlign = TextAlign.Center,
         )
 
         Spacer(modifier = Modifier.weight(1f))
@@ -307,6 +300,17 @@ private fun AppContent(
 
 @Composable
 private fun StatusBar(appState: AppState, engineState: EngineState) {
+    var secondsLeft by remember { mutableIntStateOf(10) }
+    LaunchedEffect(appState) {
+        if (appState == AppState.LISTENING) {
+            secondsLeft = 10
+            while (secondsLeft > 0) {
+                delay(1000)
+                secondsLeft--
+            }
+        }
+    }
+
     val dotColor by animateColorAsState(
         targetValue = when (appState) {
             AppState.LOADING   -> HaqMuted
@@ -320,6 +324,8 @@ private fun StatusBar(appState: AppState, engineState: EngineState) {
     )
 
     val statusLabel = when {
+        appState == AppState.LISTENING ->
+            "Listening… (${secondsLeft}s)"
         appState == AppState.ERROR && engineState is EngineState.Error ->
             "Error: ${(engineState as EngineState.Error).message}"
         else -> appState.label
@@ -366,34 +372,38 @@ private fun StatusBar(appState: AppState, engineState: EngineState) {
 @Composable
 private fun MicButton(appState: AppState, onClick: () -> Unit) {
     val isActive  = appState == AppState.LISTENING || appState == AppState.THINKING
-    val isEnabled = appState == AppState.READY || appState == AppState.LISTENING
+    val isEnabled = appState == AppState.READY
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f, targetValue = 1.18f,
+        initialValue = 1f,
+        targetValue  = 1.18f,
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "pulseScale",
     )
     val micSize by animateDpAsState(
         targetValue = if (isActive) 96.dp else 88.dp,
-        animationSpec = tween(200), label = "micSize",
+        animationSpec = tween(200),
+        label = "micSize",
     )
     val containerColor by animateColorAsState(
         targetValue = when (appState) {
-            AppState.LOADING  -> HaqMuted
-            AppState.THINKING -> Color(0xFF42A5F5)
-            else              -> HaqGreen
+            AppState.LOADING   -> HaqMuted
+            AppState.LISTENING -> Color(0xFFE53935)
+            AppState.THINKING  -> Color(0xFF42A5F5)
+            else               -> HaqGreen
         },
-        animationSpec = tween(300), label = "micBgColor",
+        animationSpec = tween(300),
+        label = "micBgColor",
     )
 
     Box(contentAlignment = Alignment.Center) {
-        if (isActive) {
+        if (appState == AppState.LISTENING) {
             Box(
                 modifier = Modifier
                     .size(micSize)
                     .scale(pulseScale)
-                    .border(2.dp, HaqGreen.copy(alpha = 0.35f), CircleShape),
+                    .border(2.dp, Color(0xFFE53935).copy(alpha = 0.35f), CircleShape),
             )
         }
         FloatingActionButton(
@@ -406,7 +416,7 @@ private fun MicButton(appState: AppState, onClick: () -> Unit) {
         ) {
             Icon(
                 imageVector = Icons.Filled.Mic,
-                contentDescription = if (isActive) "Stop" else "Speak",
+                contentDescription = if (isActive) "Recording" else "Speak",
                 modifier = Modifier.size(40.dp),
             )
         }
@@ -418,14 +428,18 @@ private fun MicButton(appState: AppState, onClick: () -> Unit) {
 @Composable
 private fun ResponseCard(responseText: String) {
     Surface(
-        modifier = Modifier.fillMaxWidth().height(260.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(260.dp),
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {
         Box(
-            modifier = Modifier.padding(20.dp).verticalScroll(rememberScrollState()),
+            modifier = Modifier
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.TopStart,
         ) {
             Text(

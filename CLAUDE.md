@@ -129,9 +129,9 @@ Prompt API / AICore without touching any other code.
 Never call LiteRT APIs directly from ViewModel or UI layer.
 
 ## Current build stage
-WEEK 1 — Getting Gemma + Whisper running on Android in airplane mode.
-End of week milestone: speak a question in Hindi, get a Gemma 
-response on-device, phone in airplane mode.
+WEEK 2 — Whisper STT integrated, voice → Gemma pipeline complete.
+End of week milestone: tap mic, speak in Hindi/Telugu/Tamil,
+Whisper transcribes on-device, Gemma responds on-device, fully offline.
 
 ## Do not suggest
 - Any cloud-based model inference
