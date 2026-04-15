@@ -13,7 +13,6 @@ import com.haq.app.tts.TTSManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -113,26 +112,26 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             _appState.value = AppState.THINKING
             _responseText.value = ""
 
-            val fullResponse = StringBuilder()
-
-            GemmaManager.generateResponse(prompt)
-                .catch { e ->
-                    Log.e("Haq/Gemma", "Inference error: ${e.message}", e)
-                    _responseText.value += "\n\n[Error: ${e.message}]"
-                    _appState.value = AppState.ERROR
-                }
-                .collect { token ->
-                    Log.d("Haq/Debug", "token received: $token")
+            try {
+                val fullResponse = StringBuilder()
+                Log.d("Haq/Gemma", "Starting flow collection")
+                GemmaManager.generateResponse(prompt).collect { token ->
+                    Log.d("Haq/Gemma", "Token received: '$token'")
                     fullResponse.append(token)
                     _responseText.value = fullResponse.toString()
                 }
-
-            Log.d("Haq/Debug", "response complete, length: ${fullResponse.length}")
-            if (_appState.value == AppState.THINKING) {
-                TTSManager.speak(
-                    text = fullResponse.toString(),
-                    languageCode = "hi"
-                )
+                Log.d("Haq/Gemma", "Collection complete, response length=${fullResponse.length}")
+                Log.d("Haq/Gemma", "Calling TTS speak()")
+                val ttsText = fullResponse.toString()
+                    .replace("**", "")
+                    .replace("*", "")
+                    .replace("#", "")
+                    .trim()
+                TTSManager.speak(text = ttsText, languageCode = "hi")
+            } catch (e: Exception) {
+                Log.e("Haq/Gemma", "Exception in submitQuery", e)
+            } finally {
+                Log.d("Haq/Gemma", "finally block — setting READY")
                 _appState.value = AppState.READY
             }
         }

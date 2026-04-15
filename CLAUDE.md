@@ -129,9 +129,23 @@ Prompt API / AICore without touching any other code.
 Never call LiteRT APIs directly from ViewModel or UI layer.
 
 ## Current build stage
-WEEK 2 — Direct audio → Gemma pipeline complete. Whisper eliminated.
-End of week milestone: tap mic, speak in Hindi/Telugu/Tamil,
-WAV audio passed directly to Gemma via InputData.Audio, fully offline.
+WEEK 2 COMPLETE — Full voice pipeline working end to end:
+- SpeechRecognizer (online) → transcript
+- Gemma 4 E2B → streaming text response to UI
+- TTS speaks sentence by sentence as tokens arrive
+- App returns to READY state after each response
+- VAD tuned: 2s minimum, 2.5s silence cutoff
+
+WEEK 3 — User profile onboarding, RAG knowledge base 
+integration (colleague), language detection from profile,
+pass language to SpeechRecognizer and TTS.
+
+## Known pending items
+- Hindi TTS voice data needs installing on device
+  (Settings → TTS → Google TTS → Install voice data → Hindi)
+- Language hardcoded to "hi" — will come from user profile
+- EXTRA_PREFER_OFFLINE = false (online recognizer) —
+  flip to true once offline Hindi model downloaded on device
 
 ## Do not suggest
 - Any cloud-based model inference

@@ -30,6 +30,7 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
     override val state: StateFlow<EngineState> = _state.asStateFlow()
 
     private var engine: Engine? = null
+    private val tokenBuffer = StringBuilder()
 
     init {
         engineScope.launch {
@@ -61,29 +62,59 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
 
         val session: Session = eng.createSession(SessionConfig())
         val inputs = listOf(InputData.Text(buildPrompt(prompt)))
+        tokenBuffer.clear()
 
         session.generateContentStream(inputs, object : ResponseCallback {
             override fun onNext(token: String) {
-                if (token.isNotEmpty()) trySend(token)
+                tokenBuffer.append(token)
+                val buf = tokenBuffer.toString()
+
+                // If buffer contains a complete end marker, close
+                if (buf.contains("<end_of_turn>") ||
+                    buf.contains("<start_of_turn>model") ||
+                    buf.contains("</s>")) {
+                    close()
+                    return
+                }
+
+                // No '<' in buffer — safe to emit all of it
+                if (!buf.contains("<")) {
+                    if (buf.isNotEmpty()) trySend(buf)
+                    tokenBuffer.clear()
+                    return
+                }
+
+                // Buffer contains '<' — emit everything before it, keep rest
+                val ltIndex = buf.indexOf("<")
+                if (ltIndex > 0) {
+                    val safe = buf.substring(0, ltIndex)
+                    trySend(safe)
+                    tokenBuffer.clear()
+                    tokenBuffer.append(buf.substring(ltIndex))
+                }
+                // ltIndex == 0: keep buffering until we know if it's a control token
             }
+
             override fun onDone() {
-                session.close()
+                // Emit anything remaining that isn't a control token
+                val remaining = tokenBuffer.toString()
+                    .replace("<end_of_turn>", "")
+                    .replace("<start_of_turn>", "")
+                    .trim()
+                if (remaining.isNotEmpty()) trySend(remaining)
+                tokenBuffer.clear()
                 close()
             }
+
             override fun onError(e: Throwable) {
-                session.close()
                 close(e)
             }
         })
 
         awaitClose {
-            try {
-                session.cancelProcess()
-            } catch (e: IllegalStateException) {
-                // Session completed naturally — ignore
-            } finally {
-                try { session.close() } catch (e: Exception) { }
-            }
+            tokenBuffer.clear()
+            try { session.cancelProcess() } catch (e: Exception) { }
+            try { session.close() } catch (e: Exception) { }
         }
     }.flowOn(Dispatchers.IO)
 
@@ -101,7 +132,8 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
     }
 
     private fun buildPrompt(userQuery: String): String =
-        "<start_of_turn>user\n$SYSTEM_PROMPT\n\n$userQuery<end_of_turn>\n" +
+        "<start_of_turn>system\n$SYSTEM_PROMPT<end_of_turn>\n" +
+        "<start_of_turn>user\n$userQuery<end_of_turn>\n" +
         "<start_of_turn>model\n"
 
     companion object {
