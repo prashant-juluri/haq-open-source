@@ -107,31 +107,54 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun submitQuery(prompt: String) {
-        Log.d("Haq/Debug", "submitQuery called with: $prompt")
         viewModelScope.launch {
             _appState.value = AppState.THINKING
             _responseText.value = ""
 
             try {
                 val fullResponse = StringBuilder()
-                Log.d("Haq/Gemma", "Starting flow collection")
+                val sentenceBuffer = StringBuilder()
+
                 GemmaManager.generateResponse(prompt).collect { token ->
-                    Log.d("Haq/Gemma", "Token received: '$token'")
                     fullResponse.append(token)
+                    sentenceBuffer.append(token)
                     _responseText.value = fullResponse.toString()
+
+                    // Speak when we hit a sentence boundary
+                    val buf = sentenceBuffer.toString()
+                    val boundaryIndex = buf.indexOfFirst {
+                        it == '।' || it == '.' || it == '?' || it == '!'
+                    }
+
+                    if (boundaryIndex >= 0) {
+                        val sentence = buf.substring(0, boundaryIndex + 1).trim()
+                        if (sentence.length > 10) {
+                            val ttsText = sentence
+                                .replace("**", "")
+                                .replace("*", "")
+                                .replace("#", "")
+                                .trim()
+                            TTSManager.speak(text = ttsText, languageCode = "hi")
+                        }
+                        // Keep everything after the boundary in buffer
+                        sentenceBuffer.clear()
+                        sentenceBuffer.append(buf.substring(boundaryIndex + 1))
+                    }
                 }
-                Log.d("Haq/Gemma", "Collection complete, response length=${fullResponse.length}")
-                Log.d("Haq/Gemma", "Calling TTS speak()")
-                val ttsText = fullResponse.toString()
+
+                // Speak any remaining text after stream ends
+                val remaining = sentenceBuffer.toString()
                     .replace("**", "")
                     .replace("*", "")
                     .replace("#", "")
                     .trim()
-                TTSManager.speak(text = ttsText, languageCode = "hi")
+                if (remaining.length > 10) {
+                    TTSManager.speak(text = remaining, languageCode = "hi")
+                }
+
             } catch (e: Exception) {
-                Log.e("Haq/Gemma", "Exception in submitQuery", e)
+                Log.e("Haq/Gemma", "submitQuery error", e)
             } finally {
-                Log.d("Haq/Gemma", "finally block — setting READY")
                 _appState.value = AppState.READY
             }
         }

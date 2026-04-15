@@ -1,13 +1,16 @@
 package com.haq.app.inference
 
 import android.content.Context
+import android.util.Log
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.InputData
-import com.google.ai.edge.litertlm.ResponseCallback
-import com.google.ai.edge.litertlm.Session
-import com.google.ai.edge.litertlm.SessionConfig
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,18 +58,25 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
     }
 
     override fun generateResponse(prompt: String): Flow<String> = callbackFlow {
+        Log.d("Haq/Gemma", "generateResponse() called, engine state: ${_state.value}")
         val eng = engine ?: run {
             close(IllegalStateException("Engine not ready"))
             return@callbackFlow
         }
 
-        val session: Session = eng.createSession(SessionConfig())
-        val inputs = listOf(InputData.Text(buildPrompt(prompt)))
+        val conversation: Conversation = eng.createConversation(
+            ConversationConfig(Contents.of(SYSTEM_PROMPT))
+        )
+        Log.d("Haq/Gemma", "New conversation created")
         tokenBuffer.clear()
 
-        session.generateContentStream(inputs, object : ResponseCallback {
-            override fun onNext(token: String) {
-                tokenBuffer.append(token)
+        conversation.sendMessageAsync(prompt, object : MessageCallback {
+            override fun onMessage(message: Message) {
+                val text = message.contents.contents
+                    .filterIsInstance<Content.Text>()
+                    .joinToString("") { it.text }
+
+                tokenBuffer.append(text)
                 val buf = tokenBuffer.toString()
 
                 // If buffer contains a complete end marker, close
@@ -113,8 +123,8 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
 
         awaitClose {
             tokenBuffer.clear()
-            try { session.cancelProcess() } catch (e: Exception) { }
-            try { session.close() } catch (e: Exception) { }
+            try { conversation.cancelProcess() } catch (e: Exception) { }
+            try { conversation.close() } catch (e: Exception) { }
         }
     }.flowOn(Dispatchers.IO)
 
@@ -130,11 +140,6 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
         if (!f.exists()) error("Model not downloaded yet")
         return f.absolutePath
     }
-
-    private fun buildPrompt(userQuery: String): String =
-        "<start_of_turn>system\n$SYSTEM_PROMPT<end_of_turn>\n" +
-        "<start_of_turn>user\n$userQuery<end_of_turn>\n" +
-        "<start_of_turn>model\n"
 
     companion object {
         private const val MODEL_ASSET = "gemma-4-E2B-it.litertlm"

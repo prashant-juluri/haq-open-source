@@ -36,7 +36,7 @@ object TTSManager {
             result == TextToSpeech.LANG_NOT_SUPPORTED) {
             tts?.setLanguage(Locale.getDefault())
         }
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "haq_response")
+        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "haq_response_${System.currentTimeMillis()}")
         Log.d("Haq/TTS", "tts.speak() dispatched")
     }
 
