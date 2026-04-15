@@ -4,12 +4,16 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.haq.app.data.ProfileManager
+import com.haq.app.data.SessionManager
+import com.haq.app.data.UserProfile
 import com.haq.app.inference.DownloadState
 import com.haq.app.inference.EngineState
 import com.haq.app.inference.GemmaManager
 import com.haq.app.inference.ModelDownloadManager
 import com.haq.app.stt.STTManager
 import com.haq.app.tts.TTSManager
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,11 +37,22 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     private val _responseText = MutableStateFlow("")
     val responseText: StateFlow<String> = _responseText.asStateFlow()
 
+    // null = still checking, true = needs onboarding, false = ready to use
+    private val _needsOnboarding = MutableStateFlow<Boolean?>(null)
+    val needsOnboarding: StateFlow<Boolean?> = _needsOnboarding.asStateFlow()
+
+    private val _activeProfileName = MutableStateFlow("")
+    val activeProfileName: StateFlow<String> = _activeProfileName.asStateFlow()
+
+    fun getAllProfiles(): Flow<List<UserProfile>> = ProfileManager.getAllProfiles()
+
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
+        ProfileManager.init(application)
         TTSManager.init(application)
         startDownload()
+        checkOnboardingState()
 
         viewModelScope.launch {
             downloadState.collect { dl ->
@@ -64,6 +79,45 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    private fun checkOnboardingState() {
+        viewModelScope.launch {
+            val profileId = SessionManager.getActiveProfileId(getApplication())
+            if (profileId == -1) {
+                _needsOnboarding.value = true
+                return@launch
+            }
+            val profile = ProfileManager.getActiveProfile(profileId)
+            if (profile == null || !profile.isOnboarded) {
+                _needsOnboarding.value = true
+            } else {
+                _activeProfileName.value = profile.name
+                _needsOnboarding.value = false
+            }
+        }
+    }
+
+    fun setOnboardingComplete() {
+        viewModelScope.launch {
+            val profileId = SessionManager.getActiveProfileId(getApplication())
+            val profile = ProfileManager.getActiveProfile(profileId)
+            if (profile != null) _activeProfileName.value = profile.name
+        }
+        _needsOnboarding.value = false
+    }
+
+    fun switchProfile(profileId: Int) {
+        SessionManager.setActiveProfileId(getApplication(), profileId)
+        viewModelScope.launch {
+            ProfileManager.updateLastActive(profileId)
+            val profile = ProfileManager.getActiveProfile(profileId)
+            if (profile != null) _activeProfileName.value = profile.name
+        }
+    }
+
+    fun startNewProfile() {
+        _needsOnboarding.value = true
     }
 
     // ── Actions ───────────────────────────────────────────────────────────────
