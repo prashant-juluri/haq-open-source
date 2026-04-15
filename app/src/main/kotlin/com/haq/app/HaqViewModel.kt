@@ -9,10 +9,12 @@ import com.haq.app.inference.EngineState
 import com.haq.app.inference.GemmaManager
 import com.haq.app.inference.ModelDownloadManager
 import com.haq.app.stt.STTManager
+import com.haq.app.tts.TTSManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class HaqViewModel(application: Application) : AndroidViewModel(application) {
@@ -35,6 +37,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
+        TTSManager.init(application)
         startDownload()
 
         viewModelScope.launch {
@@ -77,17 +80,17 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Listens via the on-device SpeechRecognizer, then pipes the transcript
-     * directly into Gemma. The UI shows Gemma's streamed response, not the
-     * raw transcript.
-     *
-     * Must be called from the main thread — viewModelScope satisfies that.
+     * Stops any in-progress TTS, listens via the on-device SpeechRecognizer,
+     * pipes the transcript into Gemma, then speaks the full response aloud
+     * in the detected language.
      */
     fun onMicButtonPressed() {
         if (_engineState.value !is EngineState.Ready) return
         if (_appState.value != AppState.READY) return
 
         viewModelScope.launch {
+            TTSManager.stop()
+            delay(300) // allow TTS to release audio focus
             _appState.value = AppState.LISTENING
             try {
                 val transcript = STTManager.recognize(getApplication())
@@ -105,9 +108,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun submitQuery(prompt: String) {
+        Log.d("Haq/Debug", "submitQuery called with: $prompt")
         viewModelScope.launch {
             _appState.value = AppState.THINKING
             _responseText.value = ""
+
+            val fullResponse = StringBuilder()
 
             GemmaManager.generateResponse(prompt)
                 .catch { e ->
@@ -115,9 +121,20 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     _responseText.value += "\n\n[Error: ${e.message}]"
                     _appState.value = AppState.ERROR
                 }
-                .collect { token -> _responseText.value += token }
+                .collect { token ->
+                    Log.d("Haq/Debug", "token received: $token")
+                    fullResponse.append(token)
+                    _responseText.value = fullResponse.toString()
+                }
 
-            if (_appState.value == AppState.THINKING) _appState.value = AppState.READY
+            Log.d("Haq/Debug", "response complete, length: ${fullResponse.length}")
+            if (_appState.value == AppState.THINKING) {
+                TTSManager.speak(
+                    text = fullResponse.toString(),
+                    languageCode = "hi"
+                )
+                _appState.value = AppState.READY
+            }
         }
     }
 
@@ -127,6 +144,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        TTSManager.shutdown()
         GemmaManager.shutdown()
     }
 }

@@ -77,8 +77,13 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
         })
 
         awaitClose {
-            session.cancelProcess()
-            session.close()
+            try {
+                session.cancelProcess()
+            } catch (e: IllegalStateException) {
+                // Session completed naturally — ignore
+            } finally {
+                try { session.close() } catch (e: Exception) { }
+            }
         }
     }.flowOn(Dispatchers.IO)
 
