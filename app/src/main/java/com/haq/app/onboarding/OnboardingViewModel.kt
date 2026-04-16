@@ -112,6 +112,17 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         _step.value = OnboardingStep.AskOccupation
     }
 
+    /** Routes a transcript to the correct step handler based on current step. */
+    fun submitAnswer(transcript: String) {
+        when (_step.value) {
+            is OnboardingStep.AskName       -> submitName(transcript)
+            is OnboardingStep.AskState      -> submitState(transcript)
+            is OnboardingStep.AskCaste      -> submitCaste(transcript)
+            is OnboardingStep.AskOccupation -> submitOccupation(transcript)
+            else -> {}
+        }
+    }
+
     fun submitOccupation(occupation: String) {
         collectedOccupation = occupation.trim()
         viewModelScope.launch {

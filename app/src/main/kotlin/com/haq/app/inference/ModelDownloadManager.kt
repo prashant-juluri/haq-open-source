@@ -3,6 +3,7 @@ package com.haq.app.inference
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +49,7 @@ class ModelDownloadManager(private val context: Context) {
         _state.value = DownloadState.Checking
 
         val modelFile = File(context.filesDir, MODEL_FILENAME)
+        Log.d("Haq/Download", "checkAndDownload() called, model exists: ${modelFile.exists()}, size: ${if (modelFile.exists()) modelFile.length() else 0}")
         if (modelFile.exists()) {
             _state.value = DownloadState.Complete
             return

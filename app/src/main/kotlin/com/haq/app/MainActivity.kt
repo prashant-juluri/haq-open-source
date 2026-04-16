@@ -1,12 +1,15 @@
 package com.haq.app
 
 import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -66,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.haq.app.data.UserProfile
@@ -97,31 +101,71 @@ class MainActivity : ComponentActivity() {
 }
 
 // ── Root screen ───────────────────────────────────────────────────────────────
+//
+// Strict startup order:
+//   1. Download gate — shown until DownloadState.Complete
+//   2. Onboarding gate — shown until profile is created
+//   3. Main app
+//
+// The download check MUST come first so onboarding never launches
+// before the model is present.
 
 @Composable
 fun HaqScreen(
     haqVm: HaqViewModel = viewModel(),
     onboardingVm: OnboardingViewModel = viewModel(),
 ) {
+    val context         = LocalContext.current
+    val downloadState   by haqVm.downloadState.collectAsStateWithLifecycle()
     val needsOnboarding by haqVm.needsOnboarding.collectAsStateWithLifecycle()
 
-    when (needsOnboarding) {
-        null -> FullScreenSpinner("Loading…")
-        true -> OnboardingScreen(
-            vm = onboardingVm,
-            onComplete = {
-                haqVm.setOnboardingComplete()
-            }
-        )
-        false -> MainAppFlow(haqVm = haqVm, onboardingVm = onboardingVm)
+    // Request RECORD_AUDIO once on first composition so the system dialog
+    // appears before onboarding tries to listen.
+    val requestPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        Log.d("Haq/Permission", "RECORD_AUDIO granted: $isGranted")
+    }
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    when (downloadState) {
+        // ── Step 1: model not yet ready — show download UI only ──────────────
+        is DownloadState.Idle,
+        is DownloadState.Checking,
+        is DownloadState.WifiRequired,
+        is DownloadState.Downloading ->
+            DownloadScreen(state = downloadState, onCheckAgain = { haqVm.retryDownload() })
+
+        is DownloadState.Error ->
+            ErrorScreen(
+                message = (downloadState as DownloadState.Error).message,
+                onRetry = { haqVm.retryDownload() },
+            )
+
+        // ── Step 2: model ready — check onboarding, then main app ─────────────
+        is DownloadState.Complete -> when (needsOnboarding) {
+            null  -> FullScreenSpinner("Loading…")
+            true  -> OnboardingScreen(
+                vm = onboardingVm,
+                onComplete = { haqVm.setOnboardingComplete() },
+            )
+            false -> MainAppFlow(haqVm = haqVm, onboardingVm = onboardingVm)
+        }
     }
 }
 
-// ── Main app flow — handles download + engine loading before showing UI ───────
+// ── Main app flow — engine loading guard then main content ────────────────────
 
 @Composable
 private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) {
-    val downloadState  by haqVm.downloadState.collectAsStateWithLifecycle()
     val engineState    by haqVm.engineState.collectAsStateWithLifecycle()
     val appState       by haqVm.appState.collectAsStateWithLifecycle()
     val responseText   by haqVm.responseText.collectAsStateWithLifecycle()
@@ -135,9 +179,6 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
         contentAlignment = Alignment.Center,
     ) {
         when {
-            downloadState !is DownloadState.Complete ->
-                DownloadScreen(state = downloadState, onCheckAgain = { haqVm.retryDownload() })
-
             engineState is EngineState.Loading ->
                 FullScreenSpinner(label = "Loading Haq…")
 
@@ -174,9 +215,11 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
     // When the Complete step arrives, speak the message then hand off
     LaunchedEffect(step) {
         if (step is OnboardingStep.Complete) {
-            TTSManager.speak(vm.getCompletionText(vm.selectedLanguage), vm.selectedLanguage)
-            delay(2500)
-            onComplete()
+            TTSManager.speak(
+                text = vm.getCompletionText(vm.selectedLanguage),
+                languageCode = vm.selectedLanguage,
+                onComplete = { onComplete() },
+            )
         }
     }
 
@@ -244,7 +287,8 @@ private fun ConversationOnboardingScreen(
     vm: OnboardingViewModel,
     listenState: OnboardingListenState,
 ) {
-    val lang = vm.selectedLanguage
+    val lang       = vm.selectedLanguage
+    val ttsSpeaking by TTSManager.isSpeaking.collectAsStateWithLifecycle()
 
     val displayText = when (step) {
         is OnboardingStep.Introduction   -> vm.getIntroductionText(lang)
@@ -256,13 +300,18 @@ private fun ConversationOnboardingScreen(
         else -> ""
     }
 
-    val statusText = when (listenState) {
-        OnboardingListenState.LISTENING   -> when (lang) {
+    val statusText = when {
+        ttsSpeaking -> when (lang) {
+            "te" -> "వింటున్నాను…"
+            "ml" -> "സംസാരിക്കുന്നു…"
+            else -> "बोल रहा हूँ…"
+        }
+        listenState == OnboardingListenState.LISTENING -> when (lang) {
             "te" -> "మాట్లాడండి…"
             "ml" -> "സംസാരിക്കൂ…"
             else -> "बोलिए…"
         }
-        OnboardingListenState.PROCESSING  -> when (lang) {
+        listenState == OnboardingListenState.PROCESSING -> when (lang) {
             "te" -> "అర్థం చేసుకుంటున్నాను…"
             "ml" -> "മനസ്സിലാക്കുന്നു…"
             else -> "समझ रहा हूँ…"
@@ -270,33 +319,42 @@ private fun ConversationOnboardingScreen(
         else -> ""
     }
 
-    // Auto-TTS and auto-listen per step
+    // Auto-TTS per step; mic opens via onComplete callback — no hardcoded delays.
     LaunchedEffect(step) {
         when (step) {
             is OnboardingStep.Introduction -> {
-                TTSManager.speak(vm.getIntroductionText(lang), lang)
-                delay(3500)
-                vm.onIntroductionComplete()
+                // Introduction text contains the name question; advance step when done
+                TTSManager.speak(
+                    text = vm.getIntroductionText(lang),
+                    languageCode = lang,
+                    onComplete = { vm.onIntroductionComplete() },
+                )
             }
             is OnboardingStep.AskName -> {
-                // Name question was already in the introduction; just listen
-                delay(500)
+                // TTS already finished (it was part of Introduction); short pause then listen
+                delay(200)
                 vm.startListening()
             }
             is OnboardingStep.AskState -> {
-                TTSManager.speak(vm.getAskStateText(lang), lang)
-                delay(2500)
-                vm.startListening()
+                TTSManager.speak(
+                    text = vm.getAskStateText(lang),
+                    languageCode = lang,
+                    onComplete = { vm.startListening() },
+                )
             }
             is OnboardingStep.AskCaste -> {
-                TTSManager.speak(vm.getAskCasteText(lang), lang)
-                delay(2500)
-                vm.startListening()
+                TTSManager.speak(
+                    text = vm.getAskCasteText(lang),
+                    languageCode = lang,
+                    onComplete = { vm.startListening() },
+                )
             }
             is OnboardingStep.AskOccupation -> {
-                TTSManager.speak(vm.getAskOccupationText(lang), lang)
-                delay(2500)
-                vm.startListening()
+                TTSManager.speak(
+                    text = vm.getAskOccupationText(lang),
+                    languageCode = lang,
+                    onComplete = { vm.startListening() },
+                )
             }
             else -> {}
         }
@@ -324,8 +382,10 @@ private fun ConversationOnboardingScreen(
             Spacer(Modifier.height(8.dp))
         }
 
+        // Mic disabled while TTS is speaking; enabled when IDLE and TTS has finished
         OnboardingMicButton(
             listenState = listenState,
+            isSpeaking = ttsSpeaking,
             onClick = { vm.startListening() },
         )
 
@@ -338,9 +398,13 @@ private fun ConversationOnboardingScreen(
 @Composable
 private fun OnboardingMicButton(
     listenState: OnboardingListenState,
+    isSpeaking: Boolean,
     onClick: () -> Unit,
 ) {
     val isListening = listenState == OnboardingListenState.LISTENING
+    // Disabled while TTS is speaking or STT is processing
+    val isDisabled  = isSpeaking || listenState == OnboardingListenState.PROCESSING
+
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -349,10 +413,11 @@ private fun OnboardingMicButton(
         label = "pulseScale",
     )
     val containerColor by animateColorAsState(
-        targetValue = when (listenState) {
-            OnboardingListenState.LISTENING  -> Color(0xFFE53935)
-            OnboardingListenState.PROCESSING -> Color(0xFF42A5F5)
-            else                             -> HaqGreen
+        targetValue = when {
+            isDisabled                                       -> HaqMuted
+            listenState == OnboardingListenState.LISTENING  -> Color(0xFFE53935)
+            listenState == OnboardingListenState.PROCESSING -> Color(0xFF42A5F5)
+            else                                            -> HaqGreen
         },
         animationSpec = tween(300),
         label = "obMicBg",
@@ -368,7 +433,7 @@ private fun OnboardingMicButton(
             )
         }
         FloatingActionButton(
-            onClick = { if (listenState == OnboardingListenState.IDLE) onClick() },
+            onClick = { if (!isDisabled && listenState == OnboardingListenState.IDLE) onClick() },
             modifier = Modifier.size(88.dp),
             shape = CircleShape,
             containerColor = containerColor,
@@ -377,7 +442,7 @@ private fun OnboardingMicButton(
         ) {
             Icon(
                 imageVector = Icons.Filled.Mic,
-                contentDescription = "Speak",
+                contentDescription = if (isSpeaking) "Speaking" else "Speak",
                 modifier = Modifier.size(40.dp),
             )
         }
@@ -401,6 +466,7 @@ private fun MainAppContent(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) onMicTap() }
 
+    val ttsSpeaking by TTSManager.isSpeaking.collectAsStateWithLifecycle()
     var showProfileSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState()
 
@@ -468,8 +534,9 @@ private fun MainAppContent(
 
         // ── Mic button ────────────────────────────────────────────────────────
         MicButton(
-            appState = appState,
-            onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+            appState   = appState,
+            isSpeaking = ttsSpeaking,
+            onClick    = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         )
 
         Spacer(Modifier.height(28.dp))
@@ -626,9 +693,10 @@ private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
 // ── Mic button ────────────────────────────────────────────────────────────────
 
 @Composable
-private fun MicButton(appState: AppState, onClick: () -> Unit) {
+private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Unit) {
     val isActive  = appState == AppState.LISTENING || appState == AppState.THINKING
-    val isEnabled = appState == AppState.READY
+    // Block tap while TTS is playing so users can't cut off the response
+    val isEnabled = appState == AppState.READY && !isSpeaking
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -643,11 +711,12 @@ private fun MicButton(appState: AppState, onClick: () -> Unit) {
         label = "micSize",
     )
     val containerColor by animateColorAsState(
-        targetValue = when (appState) {
-            AppState.LOADING   -> HaqMuted
-            AppState.LISTENING -> Color(0xFFE53935)
-            AppState.THINKING  -> Color(0xFF42A5F5)
-            else               -> HaqGreen
+        targetValue = when {
+            isSpeaking                  -> HaqMuted   // grayed while TTS plays
+            appState == AppState.LOADING   -> HaqMuted
+            appState == AppState.LISTENING -> Color(0xFFE53935)
+            appState == AppState.THINKING  -> Color(0xFF42A5F5)
+            else                           -> HaqGreen
         },
         animationSpec = tween(300),
         label = "micBgColor",
