@@ -23,4 +23,16 @@ interface UserProfileDao {
 
     @Query("DELETE FROM user_profiles WHERE id = :id")
     suspend fun deleteProfile(id: Int)
+
+    @Query("""UPDATE user_profiles SET
+        lastQuery = :query,
+        lastResponse = :response,
+        lastQueryAt = :timestamp
+        WHERE id = :profileId""")
+    suspend fun updateLastConversation(
+        profileId: Int,
+        query: String,
+        response: String,
+        timestamp: Long,
+    )
 }

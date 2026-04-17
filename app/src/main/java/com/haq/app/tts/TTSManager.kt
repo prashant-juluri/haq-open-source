@@ -30,6 +30,12 @@ object TTSManager {
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
+    // ── Voice cache ───────────────────────────────────────────────────────────
+    // Prevents gender/quality flicker between consecutive speak() calls.
+    // Cleared on reinitialise() so the engine rescan picks up newly installed packs.
+
+    private val cachedVoices = mutableMapOf<String, Voice>()
+
     // ── Locale helper ─────────────────────────────────────────────────────────
 
     private fun localeFor(languageCode: String): Locale = when (languageCode) {
@@ -42,54 +48,66 @@ object TTSManager {
 
     // ── Voice selection ───────────────────────────────────────────────────────
     //
-    // Priority order so Google voices always win over OEM voices:
-    //   P1: Google voice, exact locale (language + country)
-    //   P2: non-OEM voice, exact locale
-    //   P3: any voice, exact locale
-    //   P4: Google voice, language only
+    // Voices are cached after first selection to prevent gender/quality flicker.
+    // Priority order (offline voices preferred over online to avoid network waits):
+    //   P1: non-OEM offline voice, exact locale
+    //   P2: non-OEM online voice, exact locale
+    //   P3: any offline voice, exact locale
+    //   P4: any voice, exact locale
     //   P5: any voice, language only
     //   P6: null — no voice found for this language
 
     fun findBestVoice(languageCode: String): Voice? {
+        // Return cached voice if still in the current engine's voice list
+        cachedVoices[languageCode]?.let { cached ->
+            if (tts?.voices?.contains(cached) == true) {
+                Log.d("Haq/TTS", "Cached voice: ${cached.name}")
+                return cached
+            }
+            cachedVoices.remove(languageCode)
+        }
+
         val targetLocale = localeFor(languageCode)
         val voices = tts?.voices ?: return null
-
         Log.d("Haq/TTS", "Finding voice for $languageCode total=${voices.size}")
 
-        // P1: Google voice, exact locale
+        // P1: non-OEM offline voice, exact locale
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
             v.locale.country  == targetLocale.country &&
-            v.name.contains("google", ignoreCase = true)
-        }?.also { Log.d("Haq/TTS", "P1 Google exact: ${it.name}"); return it }
+            !v.name.contains("samsung", ignoreCase = true) &&
+            !v.name.contains("smt", ignoreCase = true) &&
+            !v.isNetworkConnectionRequired
+        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P1 offline non-OEM: ${it.name}"); return it }
 
-        // P2: Non-OEM voice, exact locale
+        // P2: non-OEM online voice, exact locale
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
             v.locale.country  == targetLocale.country &&
             !v.name.contains("samsung", ignoreCase = true) &&
             !v.name.contains("smt", ignoreCase = true)
-        }?.also { Log.d("Haq/TTS", "P2 non-OEM exact: ${it.name}"); return it }
+        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P2 online non-OEM: ${it.name}"); return it }
 
-        // P3: Any voice, exact locale
+        // P3: any offline voice, exact locale
+        voices.firstOrNull { v ->
+            v.locale.language == targetLocale.language &&
+            v.locale.country  == targetLocale.country &&
+            !v.isNetworkConnectionRequired
+        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P3 any offline: ${it.name}"); return it }
+
+        // P4: any voice, exact locale
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
             v.locale.country  == targetLocale.country
-        }?.also { Log.d("Haq/TTS", "P3 any exact: ${it.name}"); return it }
+        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P4 any exact: ${it.name}"); return it }
 
-        // P4: Google voice, language only
-        voices.firstOrNull { v ->
-            v.locale.language == targetLocale.language &&
-            v.name.contains("google", ignoreCase = true)
-        }?.also { Log.d("Haq/TTS", "P4 Google language: ${it.name}"); return it }
-
-        // P5: Any voice, language only
+        // P5: any voice, language only
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language
-        }?.also { Log.d("Haq/TTS", "P5 any language: ${it.name}"); return it }
+        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P5 language only: ${it.name}"); return it }
 
-        // P6: True last resort
-        Log.w("Haq/TTS", "P6 LAST RESORT — no voice for $languageCode")
+        // P6: last resort — device default
+        Log.w("Haq/TTS", "P6 no voice found for $languageCode")
         return null
     }
 
@@ -226,6 +244,7 @@ object TTSManager {
      */
     fun reinitialise(context: Context, onReady: () -> Unit = {}) {
         Log.d("Haq/TTS", "Reinitialising TTS")
+        cachedVoices.clear()
         tts?.stop()
         tts?.shutdown()
         tts = null

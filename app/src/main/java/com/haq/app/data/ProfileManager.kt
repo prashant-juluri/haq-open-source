@@ -1,6 +1,7 @@
 package com.haq.app.data
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 
 object ProfileManager {
@@ -41,5 +42,15 @@ object ProfileManager {
         db.userProfileDao().updateProfile(
             profile.copy(lastActiveAt = System.currentTimeMillis())
         )
+    }
+
+    suspend fun saveLastConversation(profileId: Int, query: String, response: String) {
+        db.userProfileDao().updateLastConversation(
+            profileId = profileId,
+            query = query,
+            response = response,
+            timestamp = System.currentTimeMillis(),
+        )
+        Log.d("Haq/Profile", "Saved last conversation for profile $profileId")
     }
 }

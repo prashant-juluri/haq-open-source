@@ -126,6 +126,7 @@ fun HaqScreen(
     val context         = LocalContext.current
     val downloadState   by haqVm.downloadState.collectAsStateWithLifecycle()
     val needsOnboarding by haqVm.needsOnboarding.collectAsStateWithLifecycle()
+    val onboardingStep  by onboardingVm.step.collectAsStateWithLifecycle()
 
     // Request RECORD_AUDIO once on first composition so the system dialog
     // appears before onboarding tries to listen.
@@ -141,6 +142,17 @@ fun HaqScreen(
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // Reload the active profile as soon as onboarding reaches Complete — the profile
+    // is already committed to the DB at this point (OnboardingViewModel saves it before
+    // transitioning to Complete). This ensures activeLanguage is correct before the
+    // first query and before MainAppFlow's LaunchedEffect(Unit) fires.
+    LaunchedEffect(onboardingStep) {
+        if (onboardingStep is OnboardingStep.Complete) {
+            Log.d("Haq/Main", "Onboarding complete — reloading active profile")
+            haqVm.reloadActiveProfile(context)
         }
     }
 
@@ -231,13 +243,22 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
                     activeProfileName = activeProfile,
                     profiles          = profiles,
                     onMicTap          = { haqVm.onMicButtonPressed() },
-                    onSwitchProfile   = {
-                        // switchProfile() already calls reloadActiveProfile() internally
-                        haqVm.switchProfile(it)
+                    onSwitchProfile   = { profileId ->
+                        // Stop TTS and cancel any in-flight Gemma query before switching.
+                        // switchProfile() calls reloadActiveProfile() which restores the
+                        // last conversation for the selected profile.
+                        haqVm.resetToIdle()
+                        haqVm.switchProfile(profileId)
+                        Log.d("Haq/Main", "Profile switched to $profileId — previous session cancelled")
                     },
                     onAddProfile      = {
+                        // Cancel everything before starting a fresh onboarding session.
+                        // MainAppFlow is only rendered when downloadState == Complete,
+                        // so there is no need to guard against model-not-ready here.
+                        haqVm.resetToIdle()
                         onboardingVm.reset()
                         haqVm.startNewProfile()
+                        Log.d("Haq/Main", "New profile flow started — all sessions cancelled")
                     },
                 )
         }
