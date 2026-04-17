@@ -83,7 +83,7 @@ object STTManager {
                 recognizer = null
 
                 val freshRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx)
-                recognizer = freshRecognizer
+                recognizer = freshRecognizer    
 
                 freshRecognizer.setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
