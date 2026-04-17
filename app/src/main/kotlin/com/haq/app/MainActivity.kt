@@ -10,6 +10,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import android.content.Intent
+import android.speech.tts.TextToSpeech
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -55,11 +57,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import java.util.Locale
 import com.haq.app.data.UserProfile
 import com.haq.app.inference.DownloadState
 import com.haq.app.inference.EngineState
@@ -82,8 +92,6 @@ import com.haq.app.tts.TTSManager
 import com.haq.app.ui.theme.HaqGreen
 import com.haq.app.ui.theme.HaqMuted
 import com.haq.app.ui.theme.HaqTheme
-import kotlinx.coroutines.delay
-
 enum class AppState(val label: String) {
     LOADING("Loading Haq…"),
     READY("Ready"),
@@ -166,11 +174,34 @@ fun HaqScreen(
 
 @Composable
 private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) {
+    val context        = LocalContext.current
     val engineState    by haqVm.engineState.collectAsStateWithLifecycle()
     val appState       by haqVm.appState.collectAsStateWithLifecycle()
     val responseText   by haqVm.responseText.collectAsStateWithLifecycle()
     val activeProfile  by haqVm.activeProfileName.collectAsStateWithLifecycle()
+    val activeLanguage by haqVm.activeLanguage.collectAsStateWithLifecycle()
     val profiles       by haqVm.getAllProfiles().collectAsStateWithLifecycle(emptyList())
+
+    // Silently check whether the active profile's TTS voice pack is installed.
+    // Only runs for onboarded profiles (MainAppFlow is never shown during onboarding).
+    LaunchedEffect(activeLanguage) {
+        val profileLocale = when (activeLanguage) {
+            "te" -> Locale("te", "IN")
+            "ml" -> Locale("ml", "IN")
+            "kn" -> Locale("kn", "IN")
+            "en" -> Locale("en", "IN")
+            else -> Locale("hi", "IN")
+        }
+        val result = TTSManager.isLanguageAvailable(profileLocale)
+        if (result == TextToSpeech.LANG_MISSING_DATA ||
+            result == TextToSpeech.LANG_NOT_SUPPORTED) {
+            Log.d("Haq/TTS", "Voice pack missing for $activeLanguage — launching installer")
+            val installIntent = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(installIntent)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -209,10 +240,26 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
 
 @Composable
 private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
-    val step        by vm.step.collectAsStateWithLifecycle()
-    val listenState by vm.listenState.collectAsStateWithLifecycle()
+    val step               by vm.step.collectAsStateWithLifecycle()
+    val listenState        by vm.listenState.collectAsStateWithLifecycle()
+    val supportedLanguages by vm.supportedLanguages.collectAsStateWithLifecycle()
+    val installAttempt     by vm.installAttempt.collectAsStateWithLifecycle()
+    val ttsReady           by TTSManager.ttsReady.collectAsStateWithLifecycle()
+    val context            = LocalContext.current
+    val lifecycleOwner     = LocalLifecycleOwner.current
+    val coroutineScope     = rememberCoroutineScope()
 
-    // When the Complete step arrives, speak the message then hand off
+    // Once TTS is ready, probe which languages have voice data and let the
+    // ViewModel decide whether to show the picker or skip straight to Introduction.
+    LaunchedEffect(ttsReady) {
+        if (!ttsReady) return@LaunchedEffect
+        val supported = listOf("hi", "te", "ml", "kn", "en")
+            .filter { TTSManager.checkLanguageSupport(it) }
+        Log.d("Haq/TTS", "Supported languages: $supported")
+        vm.setSupportedLanguages(supported)
+    }
+
+    // When the Complete step arrives, speak the message then hand off.
     LaunchedEffect(step) {
         if (step is OnboardingStep.Complete) {
             TTSManager.speak(
@@ -223,8 +270,77 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
         }
     }
 
+    // ON_RESUME: user returned from the TTS installer.
+    // The TTS engine needs time to register newly installed voice data, so we
+    // reinitialise and retry the language check up to 5 times with growing delays.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME &&
+                vm.step.value is OnboardingStep.InstallingVoicePacks) {
+
+                Log.d("Haq/Main", "Returned from install — waiting for TTS engine to register voices")
+                val selectedLang = vm.selectedLanguage
+
+                coroutineScope.launch {
+                    var attempts = 0
+                    var supported = false
+
+                    while (attempts < 5 && !supported) {
+                        attempts++
+                        vm.setInstallAttempt(attempts)
+
+                        // Growing delay: 1.5 s, 3 s, 4.5 s, 6 s, 7.5 s
+                        delay(1500L * attempts)
+
+                        // Reinitialise TTS so the engine rescans installed voices.
+                        // The onReady callback also refreshes the supported-language list.
+                        var reinitDone = false
+                        TTSManager.reinitialise(context) {
+                            val nowSupported = listOf("hi", "te", "ml", "kn", "en")
+                                .filter { TTSManager.checkLanguageSupport(it) }
+                            Log.d("Haq/Main", "Post-reinit supported languages: $nowSupported")
+                            vm.setSupportedLanguages(nowSupported)
+                            reinitDone = true
+                        }
+
+                        // Wait up to 3 s for the reinit callback to fire.
+                        var waitMs = 0
+                        while (!reinitDone && waitMs < 3000) {
+                            delay(100)
+                            waitMs += 100
+                        }
+
+                        supported = TTSManager.checkLanguageSupport(selectedLang)
+                        Log.d("Haq/Main",
+                            "Voice check attempt $attempts: lang=$selectedLang supported=$supported")
+                    }
+
+                    if (supported) {
+                        Log.d("Haq/Main", "Voice pack confirmed after $attempts attempts")
+                    } else {
+                        Log.w("Haq/Main",
+                            "Voice pack still not found after $attempts attempts — proceeding anyway")
+                    }
+
+                    // Always proceed — never block the user.
+                    vm.onVoicePackInstalled()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     when (step) {
-        is OnboardingStep.LanguageSelect -> LanguageSelectScreen { vm.selectLanguage(it) }
+        is OnboardingStep.LanguageSelect       -> LanguageSelectScreen(
+            supportedLanguages = supportedLanguages,
+            onSelect           = { vm.selectLanguage(it) },
+        )
+        is OnboardingStep.InstallingVoicePacks -> InstallingVoicePacksScreen(
+            language   = vm.selectedLanguage,
+            attempt    = installAttempt,
+            onContinue = { vm.onVoicePackInstalled() },
+        )
         else -> ConversationOnboardingScreen(step, vm, listenState)
     }
 }
@@ -232,13 +348,27 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
 // ── Language select ───────────────────────────────────────────────────────────
 
 @Composable
-private fun LanguageSelectScreen(onSelect: (String) -> Unit) {
+private fun LanguageSelectScreen(
+    supportedLanguages: List<String>,
+    onSelect: (String) -> Unit,
+) {
+    // All 5 languages in canonical display order.
+    val allLanguages = listOf(
+        Triple("hi", "हिंदी",   "Hindi"),
+        Triple("te", "తెలుగు",  "Telugu"),
+        Triple("ml", "മലയാളം", "Malayalam"),
+        Triple("kn", "ಕನ್ನಡ",  "Kannada"),
+        Triple("en", "English", "English"),
+    )
+    // Filter to languages confirmed available on this device.
+    val visible = allLanguages.filter { (code, _, _) -> code in supportedLanguages }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
-            .padding(horizontal = 32.dp),
+            .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -250,31 +380,124 @@ private fun LanguageSelectScreen(onSelect: (String) -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "अपनी भाषा चुनें • భాష ఎంచుకోండి • ഭാഷ തിരഞ്ഞെടുക്കൂ",
-            fontSize = 12.sp,
+            text = "अपनी भाषा चुनें • భాష ఎంచుకోండి • ഭാഷ തിരഞ്ഞെടുക്കൂ • ಭಾಷೆ ಆಯ್ಕೆ",
+            fontSize = 11.sp,
             color = HaqMuted,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(48.dp))
+        Spacer(Modifier.height(40.dp))
 
-        listOf(
-            Triple("hi", "हिंदी",    "Hindi"),
-            Triple("te", "తెలుగు",   "Telugu"),
-            Triple("ml", "മലയാളം",  "Malayalam"),
-        ).forEach { (code, script, name) ->
-            Button(
-                onClick = { onSelect(code) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(72.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface),
+        // Render up to 3 languages per row; pad shorter rows with Spacers so
+        // buttons stay equal-width regardless of how many are supported.
+        visible.chunked(3).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(script, fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                    Text(name, fontSize = 12.sp, color = HaqMuted)
+                row.forEach { (code, script, name) ->
+                    LanguageButton(
+                        script = script,
+                        name = name,
+                        onClick = { onSelect(code) },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
+                // Invisible spacers keep button widths consistent in partial rows
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun LanguageButton(
+    script: String,
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(72.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(script, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+            Text(name,   fontSize = 11.sp, color = HaqMuted)
+        }
+    }
+}
+
+// ── Installing voice packs screen ─────────────────────────────────────────────
+
+@Composable
+private fun InstallingVoicePacksScreen(language: String, attempt: Int, onContinue: () -> Unit) {
+    val preparingText = when (language) {
+        "te" -> "తెలుగు స్వరం సిద్ధమవుతోంది..."
+        "ml" -> "മലയാളം ശബ്ദം തയ്യാറാകുന്നു..."
+        "kn" -> "ಕನ್ನಡ ಧ್ವನಿ ಸಿದ್ಧವಾಗುತ್ತಿದೆ..."
+        "en" -> "Preparing English voice..."
+        else -> "हिंदी आवाज़ तैयार की जा रही है..."
+    }
+    val onceText = when (language) {
+        "te" -> "ఇది ఒక్కసారి మాత్రమే జరుగుతుంది."
+        "ml" -> "ഇത് ഒരിക്കൽ മാത്രം സംഭവിക്കും."
+        "kn" -> "ಇದು ಒಂದು ಬಾರಿ ಮಾತ್ರ ಆಗುತ್ತದೆ."
+        "en" -> "This will only happen once."
+        else -> "यह केवल एक बार होगा।"
+    }
+    val continueText = when (language) {
+        "te" -> "కొనసాగించు"
+        "ml" -> "തുടരുക"
+        "kn" -> "ಮುಂದುವರಿಸಿ"
+        "en" -> "Continue"
+        else -> "जारी रखें"
+    }
+
+    LaunchedEffect(Unit) {
+        TTSManager.speak(text = preparingText, languageCode = language)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+            modifier = Modifier.padding(32.dp),
+        ) {
+            CircularProgressIndicator(color = HaqGreen, strokeWidth = 3.dp)
+            Text(
+                text = preparingText,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 18.sp,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = onceText,
+                color = HaqMuted,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(8.dp))
+            if (attempt > 0) {
+                Text(
+                    text = "Checking… ($attempt/5)",
+                    color = HaqMuted,
+                    fontSize = 12.sp,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            Button(
+                onClick = onContinue,
+                colors = ButtonDefaults.buttonColors(containerColor = HaqGreen),
+            ) {
+                Text(continueText)
+            }
         }
     }
 }
@@ -287,8 +510,10 @@ private fun ConversationOnboardingScreen(
     vm: OnboardingViewModel,
     listenState: OnboardingListenState,
 ) {
-    val lang       = vm.selectedLanguage
-    val ttsSpeaking by TTSManager.isSpeaking.collectAsStateWithLifecycle()
+    val lang               = vm.selectedLanguage
+    val ttsSpeaking        by TTSManager.isSpeaking.collectAsStateWithLifecycle()
+    val isListening        by vm.isListening.collectAsStateWithLifecycle()
+    val micActivationEvent by vm.micActivationEvent.collectAsStateWithLifecycle()
 
     val displayText = when (step) {
         is OnboardingStep.Introduction   -> vm.getIntroductionText(lang)
@@ -304,59 +529,45 @@ private fun ConversationOnboardingScreen(
         ttsSpeaking -> when (lang) {
             "te" -> "వింటున్నాను…"
             "ml" -> "സംസാരിക്കുന്നു…"
+            "kn" -> "ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ…"
+            "en" -> "Speaking…"
             else -> "बोल रहा हूँ…"
         }
         listenState == OnboardingListenState.LISTENING -> when (lang) {
             "te" -> "మాట్లాడండి…"
             "ml" -> "സംസാരിക്കൂ…"
+            "kn" -> "ಮಾತನಾಡಿ…"
+            "en" -> "Speak now…"
             else -> "बोलिए…"
         }
         listenState == OnboardingListenState.PROCESSING -> when (lang) {
             "te" -> "అర్థం చేసుకుంటున్నాను…"
             "ml" -> "മനസ്സിലാക്കുന്നു…"
+            "kn" -> "ಅರ್ಥಮಾಡಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ…"
+            "en" -> "Processing…"
             else -> "समझ रहा हूँ…"
         }
         else -> ""
     }
 
-    // Auto-TTS per step; mic opens via onComplete callback — no hardcoded delays.
+    // Introduction fires TTS then hands off to the ViewModel chain.
+    // All subsequent questions are spoken by ViewModel.startNextQuestion(), which
+    // also increments micActivationEvent — observed below to auto-activate the mic.
     LaunchedEffect(step) {
-        when (step) {
-            is OnboardingStep.Introduction -> {
-                // Introduction text contains the name question; advance step when done
-                TTSManager.speak(
-                    text = vm.getIntroductionText(lang),
-                    languageCode = lang,
-                    onComplete = { vm.onIntroductionComplete() },
-                )
-            }
-            is OnboardingStep.AskName -> {
-                // TTS already finished (it was part of Introduction); short pause then listen
-                delay(200)
-                vm.startListening()
-            }
-            is OnboardingStep.AskState -> {
-                TTSManager.speak(
-                    text = vm.getAskStateText(lang),
-                    languageCode = lang,
-                    onComplete = { vm.startListening() },
-                )
-            }
-            is OnboardingStep.AskCaste -> {
-                TTSManager.speak(
-                    text = vm.getAskCasteText(lang),
-                    languageCode = lang,
-                    onComplete = { vm.startListening() },
-                )
-            }
-            is OnboardingStep.AskOccupation -> {
-                TTSManager.speak(
-                    text = vm.getAskOccupationText(lang),
-                    languageCode = lang,
-                    onComplete = { vm.startListening() },
-                )
-            }
-            else -> {}
+        if (step is OnboardingStep.Introduction) {
+            TTSManager.speak(
+                text = vm.getIntroductionText(lang),
+                languageCode = lang,
+                onComplete = { vm.onIntroductionComplete() },
+            )
+        }
+    }
+
+    // Auto-activate mic whenever the ViewModel signals a new question is ready.
+    // micActivationEvent starts at 0 — only fire on increments (> 0).
+    LaunchedEffect(micActivationEvent) {
+        if (micActivationEvent > 0) {
+            vm.onMicPressed()
         }
     }
 
@@ -382,11 +593,12 @@ private fun ConversationOnboardingScreen(
             Spacer(Modifier.height(8.dp))
         }
 
-        // Mic disabled while TTS is speaking; enabled when IDLE and TTS has finished
+        // Mic disabled while TTS is speaking; pulses green when ready for tap
         OnboardingMicButton(
             listenState = listenState,
+            isListening = isListening,
             isSpeaking = ttsSpeaking,
-            onClick = { vm.startListening() },
+            onClick = { vm.onMicPressed() },
         )
 
         Spacer(Modifier.height(24.dp))
@@ -398,10 +610,10 @@ private fun ConversationOnboardingScreen(
 @Composable
 private fun OnboardingMicButton(
     listenState: OnboardingListenState,
+    isListening: Boolean,
     isSpeaking: Boolean,
     onClick: () -> Unit,
 ) {
-    val isListening = listenState == OnboardingListenState.LISTENING
     // Disabled while TTS is speaking or STT is processing
     val isDisabled  = isSpeaking || listenState == OnboardingListenState.PROCESSING
 
@@ -424,12 +636,14 @@ private fun OnboardingMicButton(
     )
 
     Box(contentAlignment = Alignment.Center) {
-        if (isListening) {
+        // Pulse ring: green when waiting for tap, red when STT is active
+        if (!isDisabled) {
+            val ringColor = if (isListening) Color(0xFFE53935) else HaqGreen
             Box(
                 modifier = Modifier
                     .size(88.dp)
                     .scale(pulseScale)
-                    .border(2.dp, Color(0xFFE53935).copy(alpha = 0.35f), CircleShape),
+                    .border(2.dp, ringColor.copy(alpha = 0.35f), CircleShape),
             )
         }
         FloatingActionButton(
@@ -836,3 +1050,4 @@ private fun ErrorScreen(message: String, onRetry: () -> Unit) {
         }
     }
 }
+

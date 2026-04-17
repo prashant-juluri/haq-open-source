@@ -33,7 +33,7 @@ Mid-range Android — Snapdragon 6/7 series, Android 10+
 Minimum RAM: 4GB
 
 ## Languages supported
-Hindi, Telugu, Malayalam at launch.
+Hindi (hi), Telugu (te), Malayalam (ml), Kannada (kn), English (en) at launch.
 Architecture must be language-agnostic — adding a new language 
 should require no code changes, only asset additions.
 
@@ -136,9 +136,10 @@ WEEK 2 COMPLETE — Full voice pipeline working end to end:
 - App returns to READY state after each response
 - VAD tuned: 2s minimum, 2.5s silence cutoff
 
-WEEK 3 — User profile onboarding, RAG knowledge base 
-integration (colleague), language detection from profile,
-pass language to SpeechRecognizer and TTS.
+WEEK 3 IN PROGRESS
+- Onboarding: tap-to-speak complete, voice pack install after onboarding
+- STT: clean audio session, single recordAndTranscribeWithLanguage() path
+- Pending: knowledge base integration from colleague
 
 ## Known pending items
 - Hindi TTS voice data needs installing on device
@@ -146,6 +147,16 @@ pass language to SpeechRecognizer and TTS.
 - Language hardcoded to "hi" — will come from user profile
 - EXTRA_PREFER_OFFLINE = false (online recognizer) —
   flip to true once offline Hindi model downloaded on device
+
+## Development Principles
+
+- **minSdk 29+ only.** Never add compatibility shims or version checks for API levels below 29.
+- **No OEM-specific code.** Never write code that targets Samsung, Xiaomi, OnePlus, or any other OEM's custom APIs or intents. All OEMs must be treated identically.
+- **Documented APIs only.** Never use reflection, internal Android APIs, or undocumented system intents. If an API is not in the Android SDK javadoc, it is off-limits.
+- **SpeechRecognizer must run on the main Looper.** Always use `Handler(Looper.getMainLooper()).post {}` to create and call `startListening()`. `withContext(Dispatchers.Main)` is insufficient — SpeechRecognizer's internal ServiceConnection binds to the thread Looper, not the Kotlin dispatcher.
+- **Prefer Google TTS and STT engines explicitly.** On devices with OEM TTS/STT engines (Samsung, Xiaomi, etc.), always prefer Google TTS (`com.google.android.tts`) and Google STT (`com.google.android.googlequicksearchbox`) by initialising with explicit engine/component names. Fall back to system default only if Google engines are not installed. This is not OEM-specific code — it is engine preference using documented Android APIs available since API 14.
+- **Voice selection uses `findBestVoice()` priority:** P1 Google voice exact locale, P2 non-OEM exact locale, P3 any exact locale, P4 Google language only, P5 any language, P6 null (last resort device locale). Never call `setLanguage()` in `speak()` — always use `tts.voice = findBestVoice(...)`.
+- **Voice pack installation targets Google TTS explicitly** via `TTSManager.installVoiceData()`. The check and install happen at language selection time (`selectLanguage()`), not at onboarding completion. After install and reinitialisation, proceed to Introduction — never block the user.
 
 ## Do not suggest
 - Any cloud-based model inference

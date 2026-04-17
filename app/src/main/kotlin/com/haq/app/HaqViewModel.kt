@@ -44,13 +44,14 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeProfileName = MutableStateFlow("")
     val activeProfileName: StateFlow<String> = _activeProfileName.asStateFlow()
 
+    private val _activeLanguage = MutableStateFlow("hi")
+    val activeLanguage: StateFlow<String> = _activeLanguage.asStateFlow()
+
     fun getAllProfiles(): Flow<List<UserProfile>> = ProfileManager.getAllProfiles()
 
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
-        ProfileManager.init(application)
-        TTSManager.init(application)
         startDownload()
         checkOnboardingState()
 
@@ -93,6 +94,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 _needsOnboarding.value = true
             } else {
                 _activeProfileName.value = profile.name
+                _activeLanguage.value = profile.preferredLanguage
                 _needsOnboarding.value = false
             }
         }
@@ -102,7 +104,10 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val profileId = SessionManager.getActiveProfileId(getApplication())
             val profile = ProfileManager.getActiveProfile(profileId)
-            if (profile != null) _activeProfileName.value = profile.name
+            if (profile != null) {
+                _activeProfileName.value = profile.name
+                _activeLanguage.value = profile.preferredLanguage
+            }
         }
         _needsOnboarding.value = false
     }
@@ -112,7 +117,10 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             ProfileManager.updateLastActive(profileId)
             val profile = ProfileManager.getActiveProfile(profileId)
-            if (profile != null) _activeProfileName.value = profile.name
+            if (profile != null) {
+                _activeProfileName.value = profile.name
+                _activeLanguage.value = profile.preferredLanguage
+            }
         }
     }
 
@@ -146,7 +154,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             delay(300) // allow TTS to release audio focus
             _appState.value = AppState.LISTENING
             try {
-                val transcript = STTManager.recognize(getApplication())
+                val transcript = STTManager.recordAndTranscribe(getApplication(), _activeLanguage.value)
                 Log.d("Haq/STT", "Transcript: \"$transcript\"")
                 if (transcript.isNotBlank()) {
                     submitQuery(transcript)
@@ -188,7 +196,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                                 .replace("*", "")
                                 .replace("#", "")
                                 .trim()
-                            TTSManager.speak(text = ttsText, languageCode = "hi")
+                            TTSManager.speak(text = ttsText, languageCode = _activeLanguage.value)
                         }
                         // Keep everything after the boundary in buffer
                         sentenceBuffer.clear()
@@ -203,7 +211,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     .replace("#", "")
                     .trim()
                 if (remaining.length > 10) {
-                    TTSManager.speak(text = remaining, languageCode = "hi")
+                    TTSManager.speak(text = remaining, languageCode = _activeLanguage.value)
                 }
 
             } catch (e: Exception) {
