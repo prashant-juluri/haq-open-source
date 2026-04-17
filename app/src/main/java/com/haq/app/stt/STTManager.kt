@@ -1,9 +1,7 @@
 package com.haq.app.stt
 
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,10 +14,6 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 object STTManager {
-
-    private const val GOOGLE_STT_PACKAGE = "com.google.android.googlequicksearchbox"
-    private const val GOOGLE_STT_SERVICE =
-        "com.google.android.voicesearch.serviceapi.GoogleRecognitionService"
 
     // Application context stored on first call — avoids threading issues
     // with Activity contexts and survives configuration changes.
@@ -88,23 +82,7 @@ object STTManager {
                 recognizer?.destroy()
                 recognizer = null
 
-                val googleSttAvailable = SpeechRecognizer.isRecognitionAvailable(ctx) &&
-                    try {
-                        ctx.packageManager.getPackageInfo(GOOGLE_STT_PACKAGE, 0)
-                        true
-                    } catch (e: PackageManager.NameNotFoundException) {
-                        false
-                    }
-                Log.d("Haq/STT", "Using recognizer: google=$googleSttAvailable")
-
-                val freshRecognizer = if (googleSttAvailable) {
-                    SpeechRecognizer.createSpeechRecognizer(
-                        ctx,
-                        ComponentName(GOOGLE_STT_PACKAGE, GOOGLE_STT_SERVICE)
-                    )
-                } else {
-                    SpeechRecognizer.createSpeechRecognizer(ctx)
-                }
+                val freshRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx)
                 recognizer = freshRecognizer
 
                 freshRecognizer.setRecognitionListener(object : RecognitionListener {
@@ -138,10 +116,11 @@ object STTManager {
                     override fun onEvent(eventType: Int, params: Bundle?) {}
                 })
 
-                // Generous thresholds for onboarding; tighter for main app queries.
-                val minMs      = if (isOnboarding) 3000L else 2000L
-                val completeMs = if (isOnboarding) 5000L else 2500L
-                val possibleMs = if (isOnboarding) 3000L else 1500L
+                // Onboarding: generous thresholds (users gathering their thoughts).
+                // Main app: longer silence detection so natural pauses aren't cut off.
+                val minMs      = if (isOnboarding) 3000L else 3000L
+                val completeMs = if (isOnboarding) 5000L else 4000L
+                val possibleMs = if (isOnboarding) 3000L else 2000L
 
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,

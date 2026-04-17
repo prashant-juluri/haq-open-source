@@ -1,6 +1,7 @@
 package com.haq.app
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -48,6 +49,13 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     val activeLanguage: StateFlow<String> = _activeLanguage.asStateFlow()
 
     fun getAllProfiles(): Flow<List<UserProfile>> = ProfileManager.getAllProfiles()
+
+    // Active profile — updated on load, onboarding complete, and profile switch.
+    // Used to prepend context to the user query and to select STT/TTS language.
+    private var activeProfile: UserProfile? = null
+
+    // Prevents concurrent generateResponse() calls — LiteRT-LM does not support them.
+    private var isGenerating = false
 
     // ── Init ──────────────────────────────────────────────────────────────────
 
@@ -101,26 +109,30 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setOnboardingComplete() {
-        viewModelScope.launch {
-            val profileId = SessionManager.getActiveProfileId(getApplication())
-            val profile = ProfileManager.getActiveProfile(profileId)
-            if (profile != null) {
-                _activeProfileName.value = profile.name
-                _activeLanguage.value = profile.preferredLanguage
-            }
-        }
         _needsOnboarding.value = false
+        reloadActiveProfile(getApplication())
     }
 
     fun switchProfile(profileId: Int) {
         SessionManager.setActiveProfileId(getApplication(), profileId)
         viewModelScope.launch {
             ProfileManager.updateLastActive(profileId)
-            val profile = ProfileManager.getActiveProfile(profileId)
-            if (profile != null) {
-                _activeProfileName.value = profile.name
-                _activeLanguage.value = profile.preferredLanguage
-            }
+        }
+        reloadActiveProfile(getApplication())
+    }
+
+    fun reloadActiveProfile(context: Context) {
+        Log.d("Haq/VM", "reloadActiveProfile() called")
+        viewModelScope.launch {
+            val profileId = SessionManager.getActiveProfileId(context)
+            val profile = ProfileManager.getActiveProfile(profileId) ?: return@launch
+            activeProfile = profile
+            _activeProfileName.value = profile.name
+            _activeLanguage.value = profile.preferredLanguage
+            Log.d("Haq/VM", "Profile reloaded: name=${profile.name} " +
+                "lang=${profile.preferredLanguage} " +
+                "state=${profile.state} " +
+                "caste=${profile.casteCategory}")
         }
     }
 
@@ -170,6 +182,18 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun submitQuery(prompt: String) {
         viewModelScope.launch {
+            if (_engineState.value !is EngineState.Ready) {
+                Log.e("Haq/Gemma", "Engine not ready (state=${_engineState.value}), skipping query")
+                _appState.value = AppState.READY
+                return@launch
+            }
+
+            if (isGenerating) {
+                Log.w("Haq/Gemma", "Already generating, ignoring query")
+                return@launch
+            }
+            isGenerating = true
+
             _appState.value = AppState.THINKING
             _responseText.value = ""
 
@@ -177,7 +201,21 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 val fullResponse = StringBuilder()
                 val sentenceBuffer = StringBuilder()
 
-                GemmaManager.generateResponse(prompt).collect { token ->
+                // Profile context is prepended to the user query, not the system prompt.
+                // LiteRT-LM's system prompt is set in ConversationConfig inside LiteRTEngine
+                // and must not be duplicated here — doing so causes Status Code 13.
+                val contextualQuery = activeProfile
+                    ?.takeIf { it.isOnboarded }
+                    ?.let { p ->
+                        "User context: Name=${p.name}, State=${p.state}, " +
+                        "Category=${p.casteCategory}, Occupation=${p.occupation}. " +
+                        "Query: $prompt"
+                    }
+                    ?: prompt
+
+                Log.d("Haq/Gemma", "submitQuery() contextualQuery length=${contextualQuery.length}")
+
+                GemmaManager.generateResponse(contextualQuery).collect { token ->
                     fullResponse.append(token)
                     sentenceBuffer.append(token)
                     _responseText.value = fullResponse.toString()
@@ -217,6 +255,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e("Haq/Gemma", "submitQuery error", e)
             } finally {
+                isGenerating = false
                 _appState.value = AppState.READY
             }
         }

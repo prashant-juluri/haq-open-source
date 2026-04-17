@@ -182,6 +182,11 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
     val activeLanguage by haqVm.activeLanguage.collectAsStateWithLifecycle()
     val profiles       by haqVm.getAllProfiles().collectAsStateWithLifecycle(emptyList())
 
+    // Load the active profile once on entry so language + system prompt are ready.
+    LaunchedEffect(Unit) {
+        haqVm.reloadActiveProfile(context)
+    }
+
     // Silently check whether the active profile's TTS voice pack is installed.
     // Only runs for onboarded profiles (MainAppFlow is never shown during onboarding).
     LaunchedEffect(activeLanguage) {
@@ -226,7 +231,10 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
                     activeProfileName = activeProfile,
                     profiles          = profiles,
                     onMicTap          = { haqVm.onMicButtonPressed() },
-                    onSwitchProfile   = { haqVm.switchProfile(it) },
+                    onSwitchProfile   = {
+                        // switchProfile() already calls reloadActiveProfile() internally
+                        haqVm.switchProfile(it)
+                    },
                     onAddProfile      = {
                         onboardingVm.reset()
                         haqVm.startNewProfile()

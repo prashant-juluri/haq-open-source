@@ -1,6 +1,7 @@
 package com.haq.app.inference
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -19,6 +20,7 @@ object GemmaManager {
     fun init(context: Context) {
         if (::engine.isInitialized) return
         engine = LiteRTEngine(context.applicationContext)
+        Log.d("Haq/Gemma", "Engine created hashCode=${engine.hashCode()}")
     }
 
     /** Tear down the current engine and create a fresh one (for error recovery). */
@@ -27,8 +29,10 @@ object GemmaManager {
         engine = LiteRTEngine(context.applicationContext)
     }
 
-    fun generateResponse(prompt: String): Flow<String> =
-        engine.generateResponse(prompt)
+    fun generateResponse(prompt: String): Flow<String> {
+        Log.d("Haq/Gemma", "generateResponse() engine hashCode=${engine.hashCode()}")
+        return engine.generateResponse(prompt)
+    }
 
     fun shutdown() {
         if (::engine.isInitialized) engine.shutdown()
