@@ -243,6 +243,22 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 Log.w("Haq/Gemma", "Already generating, ignoring query")
                 return@launch
             }
+
+            // Guard against calling generateResponse() before the model file is fully
+            // written to disk. A partial/empty file causes Status Code 13.
+            if (!GemmaManager.isModelReady()) {
+                Log.w("Haq/VM", "Model not ready — query blocked")
+                _responseText.value = when (_activeLanguage.value) {
+                    "hi" -> "मॉडल लोड हो रहा है। कृपया प्रतीक्षा करें।"
+                    "te" -> "మోడల్ లోడ్ అవుతోంది. దయచేసి వేచి ఉండండి."
+                    "ml" -> "മോഡൽ ലോഡ് ആകുന്നു. ദയവായി കാത്തിരിക്കൂ."
+                    "kn" -> "ಮಾದರಿ ಲೋಡ್ ಆಗುತ್ತಿದೆ. ದಯವಿಟ್ಟು ನಿರೀಕ್ಷಿಸಿ."
+                    else -> "Model is loading. Please wait."
+                }
+                _appState.value = AppState.READY
+                return@launch
+            }
+
             isGenerating = true
             _appState.value = AppState.THINKING
             _responseText.value = ""

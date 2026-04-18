@@ -1,8 +1,16 @@
 package com.haq.app
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -10,8 +18,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import android.content.Intent
-import android.speech.tts.TextToSpeech
+import androidx.lifecycle.ViewModelProvider
+import com.haq.app.onboarding.OnboardingViewModel
+import com.haq.app.tts.TTSManager
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -57,18 +66,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -81,14 +83,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import java.util.Locale
 import com.haq.app.data.UserProfile
 import com.haq.app.inference.DownloadState
 import com.haq.app.inference.EngineState
 import com.haq.app.onboarding.OnboardingListenState
 import com.haq.app.onboarding.OnboardingStep
-import com.haq.app.onboarding.OnboardingViewModel
-import com.haq.app.tts.TTSManager
 import com.haq.app.ui.theme.HaqGreen
 import com.haq.app.ui.theme.HaqMuted
 import com.haq.app.ui.theme.HaqTheme
@@ -101,10 +100,52 @@ enum class AppState(val label: String) {
 }
 
 class MainActivity : ComponentActivity() {
+
+    private var ttsDataReceiver: BroadcastReceiver? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        registerTtsDataReceiver()
         setContent { HaqTheme { HaqScreen() } }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        ttsDataReceiver?.let { unregisterReceiver(it) }
+        ttsDataReceiver = null
+    }
+
+    /**
+     * Registers for ACTION_TTS_DATA_INSTALLED — the primary signal that Google TTS
+     * has finished downloading voice data. On receipt, reinitialises TTS so the new
+     * voice is picked up, then notifies OnboardingViewModel after a 1-second flush delay.
+     */
+    private fun registerTtsDataReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent?) {
+                if (intent?.action != TextToSpeech.Engine.ACTION_TTS_DATA_INSTALLED) return
+                Log.d("Haq/TTS", "ACTION_TTS_DATA_INSTALLED received — notifying OnboardingViewModel")
+                TTSManager.reinitialise(context) {
+                    // 1-second delay gives Google TTS time to flush audio file writes
+                    // before we re-scan the voice list in checkAndAdvanceIfReady().
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        ViewModelProvider(this@MainActivity)
+                            .get(OnboardingViewModel::class.java)
+                            .onTtsDataInstalled()
+                    }, 1000L)
+                }
+            }
+        }
+        ttsDataReceiver = receiver
+        val filter = IntentFilter(TextToSpeech.Engine.ACTION_TTS_DATA_INSTALLED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(receiver, filter)
+        }
+        Log.d("Haq/TTS", "TTS data receiver registered")
     }
 }
 
@@ -199,27 +240,6 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
         haqVm.reloadActiveProfile(context)
     }
 
-    // Silently check whether the active profile's TTS voice pack is installed.
-    // Only runs for onboarded profiles (MainAppFlow is never shown during onboarding).
-    LaunchedEffect(activeLanguage) {
-        val profileLocale = when (activeLanguage) {
-            "te" -> Locale("te", "IN")
-            "ml" -> Locale("ml", "IN")
-            "kn" -> Locale("kn", "IN")
-            "en" -> Locale("en", "IN")
-            else -> Locale("hi", "IN")
-        }
-        val result = TTSManager.isLanguageAvailable(profileLocale)
-        if (result == TextToSpeech.LANG_MISSING_DATA ||
-            result == TextToSpeech.LANG_NOT_SUPPORTED) {
-            Log.d("Haq/TTS", "Voice pack missing for $activeLanguage — launching installer")
-            val installIntent = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(installIntent)
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -272,21 +292,7 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
     val step               by vm.step.collectAsStateWithLifecycle()
     val listenState        by vm.listenState.collectAsStateWithLifecycle()
     val supportedLanguages by vm.supportedLanguages.collectAsStateWithLifecycle()
-    val installAttempt     by vm.installAttempt.collectAsStateWithLifecycle()
-    val ttsReady           by TTSManager.ttsReady.collectAsStateWithLifecycle()
-    val context            = LocalContext.current
-    val lifecycleOwner     = LocalLifecycleOwner.current
-    val coroutineScope     = rememberCoroutineScope()
-
-    // Once TTS is ready, probe which languages have voice data and let the
-    // ViewModel decide whether to show the picker or skip straight to Introduction.
-    LaunchedEffect(ttsReady) {
-        if (!ttsReady) return@LaunchedEffect
-        val supported = listOf("hi", "te", "ml", "kn", "en")
-            .filter { TTSManager.checkLanguageSupport(it) }
-        Log.d("Haq/TTS", "Supported languages: $supported")
-        vm.setSupportedLanguages(supported)
-    }
+    val preparingStatus    by vm.preparingStatus.collectAsStateWithLifecycle()
 
     // When the Complete step arrives, speak the message then hand off.
     LaunchedEffect(step) {
@@ -299,78 +305,51 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
         }
     }
 
-    // ON_RESUME: user returned from the TTS installer.
-    // The TTS engine needs time to register newly installed voice data, so we
-    // reinitialise and retry the language check up to 5 times with growing delays.
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME &&
-                vm.step.value is OnboardingStep.InstallingVoicePacks) {
-
-                Log.d("Haq/Main", "Returned from install — waiting for TTS engine to register voices")
-                val selectedLang = vm.selectedLanguage
-
-                coroutineScope.launch {
-                    var attempts = 0
-                    var supported = false
-
-                    while (attempts < 5 && !supported) {
-                        attempts++
-                        vm.setInstallAttempt(attempts)
-
-                        // Growing delay: 1.5 s, 3 s, 4.5 s, 6 s, 7.5 s
-                        delay(1500L * attempts)
-
-                        // Reinitialise TTS so the engine rescans installed voices.
-                        // The onReady callback also refreshes the supported-language list.
-                        var reinitDone = false
-                        TTSManager.reinitialise(context) {
-                            val nowSupported = listOf("hi", "te", "ml", "kn", "en")
-                                .filter { TTSManager.checkLanguageSupport(it) }
-                            Log.d("Haq/Main", "Post-reinit supported languages: $nowSupported")
-                            vm.setSupportedLanguages(nowSupported)
-                            reinitDone = true
-                        }
-
-                        // Wait up to 3 s for the reinit callback to fire.
-                        var waitMs = 0
-                        while (!reinitDone && waitMs < 3000) {
-                            delay(100)
-                            waitMs += 100
-                        }
-
-                        supported = TTSManager.checkLanguageSupport(selectedLang)
-                        Log.d("Haq/Main",
-                            "Voice check attempt $attempts: lang=$selectedLang supported=$supported")
-                    }
-
-                    if (supported) {
-                        Log.d("Haq/Main", "Voice pack confirmed after $attempts attempts")
-                    } else {
-                        Log.w("Haq/Main",
-                            "Voice pack still not found after $attempts attempts — proceeding anyway")
-                    }
-
-                    // Always proceed — never block the user.
-                    vm.onVoicePackInstalled()
-                }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
     when (step) {
-        is OnboardingStep.LanguageSelect       -> LanguageSelectScreen(
+        is OnboardingStep.PreparingVoices -> PreparingVoicesScreen(status = preparingStatus)
+        is OnboardingStep.LanguageSelect  -> LanguageSelectScreen(
             supportedLanguages = supportedLanguages,
             onSelect           = { vm.selectLanguage(it) },
         )
         is OnboardingStep.InstallingVoicePacks -> InstallingVoicePacksScreen(
             language   = vm.selectedLanguage,
-            attempt    = installAttempt,
+            attempt    = 0,
             onContinue = { vm.onVoicePackInstalled() },
         )
         else -> ConversationOnboardingScreen(step, vm, listenState)
+    }
+}
+
+// ── PreparingVoices screen ────────────────────────────────────────────────────
+
+@Composable
+private fun PreparingVoicesScreen(status: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            CircularProgressIndicator(color = Color(0xFF1D6F42))
+            Spacer(Modifier.height(24.dp))
+            Text(
+                text = "Preparing Haq...",
+                fontSize = 18.sp,
+                color = Color(0xFF1D6F42),
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = status,
+                fontSize = 14.sp,
+                color = HaqMuted,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

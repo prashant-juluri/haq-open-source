@@ -49,10 +49,15 @@ class ModelDownloadManager(private val context: Context) {
         _state.value = DownloadState.Checking
 
         val modelFile = File(context.filesDir, MODEL_FILENAME)
-        Log.d("Haq/Download", "checkAndDownload() called, model exists: ${modelFile.exists()}, size: ${if (modelFile.exists()) modelFile.length() else 0}")
-        if (modelFile.exists()) {
+        val fileSize = if (modelFile.exists()) modelFile.length() else 0L
+        Log.d("Haq/Download", "checkAndDownload() called, model exists: ${modelFile.exists()}, size: $fileSize")
+        if (modelFile.exists() && fileSize > MIN_MODEL_SIZE) {
             _state.value = DownloadState.Complete
             return
+        }
+        if (modelFile.exists() && fileSize <= MIN_MODEL_SIZE) {
+            Log.w("Haq/Download", "Model file is too small ($fileSize bytes) — incomplete download, re-downloading")
+            modelFile.delete()
         }
 
         if (!isOnWifi()) {
@@ -125,6 +130,7 @@ class ModelDownloadManager(private val context: Context) {
 
     companion object {
         const val MODEL_FILENAME = "gemma-4-E2B-it.litertlm"
+        const val MIN_MODEL_SIZE = 1_000_000_000L  // 1GB — incomplete downloads are smaller
 
         // Placeholder — replace with final CDN URL before shipping
         private const val MODEL_DOWNLOAD_URL =

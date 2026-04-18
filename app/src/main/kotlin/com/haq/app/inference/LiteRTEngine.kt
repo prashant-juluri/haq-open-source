@@ -33,7 +33,11 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
     override val state: StateFlow<EngineState> = _state.asStateFlow()
 
     private var engine: Engine? = null
-    private val tokenBuffer = StringBuilder()
+
+    // Tracks the active conversation so it can be explicitly closed before the next
+    // generateResponse() call. Reusing a Conversation object causes Status Code 13
+    // (LiteRtLmJniException) — always create a fresh one per query.
+    private var activeConversation: Conversation? = null
 
     init {
         engineScope.launch {
@@ -64,11 +68,20 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
             return@callbackFlow
         }
 
+        // Close any previous conversation before creating a new one.
+        // Reusing a Conversation causes Status Code 13 (LiteRtLmJniException).
+        try { activeConversation?.cancelProcess() } catch (e: Exception) { }
+        try { activeConversation?.close() } catch (e: Exception) { }
+        activeConversation = null
+
         val conversation: Conversation = eng.createConversation(
             ConversationConfig(Contents.of(SYSTEM_PROMPT))
         )
-        Log.d("Haq/Gemma", "New conversation created")
-        tokenBuffer.clear()
+        activeConversation = conversation
+        Log.d("Haq/Gemma", "New conversation created hashCode=${conversation.hashCode()}")
+
+        // tokenBuffer is local so parallel calls (guarded by isGenerating) can't share state.
+        val tokenBuffer = StringBuilder()
 
         conversation.sendMessageAsync(prompt, object : MessageCallback {
             override fun onMessage(message: Message) {
@@ -125,6 +138,7 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
             tokenBuffer.clear()
             try { conversation.cancelProcess() } catch (e: Exception) { }
             try { conversation.close() } catch (e: Exception) { }
+            if (activeConversation === conversation) activeConversation = null
         }
     }.flowOn(Dispatchers.IO)
 
