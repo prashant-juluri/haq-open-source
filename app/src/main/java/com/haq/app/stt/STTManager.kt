@@ -1,11 +1,13 @@
 package com.haq.app.stt
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
@@ -14,6 +16,8 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 object STTManager {
+
+    private const val GOOGLE_STT_PACKAGE = "com.google.android.googlequicksearchbox"
 
     // Application context stored on first call — avoids threading issues
     // with Activity contexts and survives configuration changes.
@@ -25,6 +29,25 @@ object STTManager {
 
     fun isAvailable(context: Context): Boolean =
         SpeechRecognizer.isRecognitionAvailable(context)
+
+    private fun preferredRecognitionService(context: Context): ComponentName? {
+        val services = context.packageManager.queryIntentServices(
+            Intent(RecognitionService.SERVICE_INTERFACE).setPackage(GOOGLE_STT_PACKAGE),
+            0,
+        )
+        val googleService = services.firstOrNull { info ->
+            info.serviceInfo?.packageName == GOOGLE_STT_PACKAGE
+        }?.serviceInfo
+
+        if (googleService != null) {
+            val component = ComponentName(googleService.packageName, googleService.name)
+            Log.d("Haq/STT", "Using Google STT service: $component")
+            return component
+        }
+
+        Log.w("Haq/STT", "Google STT service not found, falling back to default recognizer")
+        return null
+    }
 
     /**
      * Onboarding: no language hint (device auto-detects), generous VAD
@@ -82,7 +105,12 @@ object STTManager {
                 recognizer?.destroy()
                 recognizer = null
 
-                val freshRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx)
+                val preferredService = preferredRecognitionService(ctx)
+                val freshRecognizer = if (preferredService != null) {
+                    SpeechRecognizer.createSpeechRecognizer(ctx, preferredService)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(ctx)
+                }
                 recognizer = freshRecognizer
 
                 freshRecognizer.setRecognitionListener(object : RecognitionListener {

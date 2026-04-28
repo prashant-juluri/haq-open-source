@@ -209,10 +209,10 @@ object TTSManager {
 
         tts = if (googleInstalled) {
             Log.d("Haq/TTS", "Using Google TTS engine")
-            TextToSpeech(context, listener, GOOGLE_TTS_PACKAGE)
+            createTtsInstance(context, listener)
         } else {
             Log.w("Haq/TTS", "Google TTS not found, using system default")
-            TextToSpeech(context, listener)
+            createTtsInstance(context, listener)
         }
     }
 
@@ -221,6 +221,19 @@ object TTSManager {
         true
     } catch (e: PackageManager.NameNotFoundException) {
         false
+    }
+
+    private fun createTtsInstance(
+        context: Context,
+        listener: TextToSpeech.OnInitListener,
+    ): TextToSpeech {
+        return if (isGoogleTtsInstalled(context)) {
+            Log.d("Haq/TTS", "Creating Google TTS instance")
+            TextToSpeech(context, listener, GOOGLE_TTS_PACKAGE)
+        } else {
+            Log.w("Haq/TTS", "Google TTS not found, creating system-default TTS instance")
+            TextToSpeech(context, listener)
+        }
     }
 
     // ── speak() ────────────────────────────────────────────────────────────────
@@ -313,7 +326,7 @@ object TTSManager {
         })
 
         val params: Bundle? = if (silent) Bundle().apply {
-            putString(TextToSpeech.Engine.KEY_PARAM_VOLUME, "0")
+            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0f)
         } else null
         Log.d("Haq/TTS", "speak() utteranceId=$utteranceId queueMode=$queueMode textLength=${ttsText.length} silent=$silent")
         tts?.speak(ttsText, queueMode, params, utteranceId)
@@ -335,8 +348,6 @@ object TTSManager {
         _ttsReady.value = false
         _isSpeaking.value = false
 
-        val googleInstalled = isGoogleTtsInstalled(context)
-
         val listener = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
                 isReady = true
@@ -354,11 +365,7 @@ object TTSManager {
             }
         }
 
-        tts = if (googleInstalled) {
-            TextToSpeech(context, listener, GOOGLE_TTS_PACKAGE)
-        } else {
-            TextToSpeech(context, listener)
-        }
+        tts = createTtsInstance(context, listener)
     }
 
     /**
@@ -370,13 +377,32 @@ object TTSManager {
      * No delay() is needed after calling this function.
      */
     suspend fun reinitialiseAndWait() {
+        val context = appContext ?: run {
+            Log.e("Haq/TTS", "reinitialiseAndWait: appContext missing")
+            return
+        }
+
         suspendCancellableCoroutine<Unit> { cont ->
             Log.d("Haq/TTS", "reinitialiseAndWait: shutting down")
+            cachedVoices.clear()
+            isReady = false
+            _ttsReady.value = false
+            _isSpeaking.value = false
+            tts?.stop()
             tts?.shutdown()
-            tts = TextToSpeech(appContext) { status ->
+            tts = createTtsInstance(context, TextToSpeech.OnInitListener { status ->
                 Log.d("Haq/TTS", "reinitialiseAndWait: onInit status=$status")
+                if (status == TextToSpeech.SUCCESS) {
+                    isReady = true
+                    tts?.setSpeechRate(0.9f)
+                    tts?.setPitch(1.0f)
+                    _ttsReady.value = true
+                    Log.d("Haq/TTS", "reinitialiseAndWait: ready engine=${tts?.defaultEngine}")
+                } else {
+                    Log.e("Haq/TTS", "reinitialiseAndWait: init failed status=$status")
+                }
                 if (cont.isActive) cont.resume(Unit)
-            }
+            })
         }
 
         // Poll until voice list stabilises or timeout.

@@ -1,7 +1,6 @@
 package com.haq.app.onboarding
 
 import android.app.Application
-import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -97,19 +96,13 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
      * real-looking non-stub entries can both exist without downloaded synthesis data and
      * produce ERROR_OUTPUT (-4). This function verifies actual synthesis works.
      *
-     * If any languages fail: sets step to [OnboardingStep.PreparingVoices] to keep the
-     * blocking screen visible, fires [TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA] ONCE
-     * for all missing languages, then polls each language sequentially (one at a time,
-     * 5-second interval, 5-minute global timeout).
-     *
-     * Returns true only when ALL 5 languages pass testSpeak(). Returns false if the
-     * 5-minute timeout expires with any language still failing. The caller must NOT
-     * advance to LanguageSelect when this returns false.
+     * Returns true only when ALL 5 languages pass testSpeak(). On failure it keeps the
+     * blocking screen visible and re-triggers silent voice download so the next poll can
+     * pick up newly installed data.
      */
     private suspend fun verifyAllVoicesSpeakable(): Boolean {
         val allLangs = listOf("hi", "te", "ml", "kn", "en")
 
-        // Initial pass: identify any missing voice data
         val failed = mutableListOf<String>()
         for (lang in allLangs) {
             val ok = TTSManager.testSpeak(lang)
@@ -122,110 +115,48 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             return true
         }
 
-        // Keep PreparingVoices screen visible — Google TTS downloads silently in the background
         _step.value = OnboardingStep.PreparingVoices
         Log.w("Haq/Onboard", "voice data missing for langs=$failed — waiting for silent download")
-
-        // Poll each language one at a time — 5 s between attempts, 5-minute global timeout
-        val startTime = System.currentTimeMillis()
-        val timeoutMs = 300_000L
-        var totalAttempts = 0
-        var allPassed = true
-
-        for (lang in allLangs) {
-            var attempt = 0
-            var langPassed = false
-            while (System.currentTimeMillis() - startTime < timeoutMs) {
-                delay(5_000L)
-                attempt++
-                totalAttempts++
-                val ok = TTSManager.testSpeak(lang)
-                Log.d("Haq/Onboard",
-                    "voice download poll: lang=$lang attempt=$attempt total=$totalAttempts")
-                if (ok) {
-                    Log.d("Haq/Onboard", "voice ready: $lang after $attempt attempts")
-                    langPassed = true
-                    break
-                }
-            }
-            if (!langPassed) allPassed = false
-        }
-
-        if (allPassed) {
-            Log.d("Haq/Onboard", "all voices confirmed working")
-        } else {
-            Log.w("Haq/Onboard", "voice verification timed out, some languages still failing")
-        }
-        return allPassed
+        TTSManager.ensureAllVoicesDownloading()
+        return false
     }
 
     /**
-     * Checks immediately for returning users (voices + model already ready) and advances
-     * at once. For first-launch, triggers silent voice downloads and starts a 5-second
-     * poll until both voices and model are ready (2-minute timeout).
+     * Triggers silent voice downloads immediately, then polls until both the model and
+     * real synthesizable voice packs are ready. The app must not advance into onboarding
+     * until both conditions are satisfied.
      *
-     * Advances to LanguageSelect only when BOTH getMissingLanguages().isEmpty()
-     * AND GemmaManager.isModelReady(getApplication()) are true.
+     * Advances to LanguageSelect only when BOTH GemmaManager.isModelReady(getApplication())
+     * and verifyAllVoicesSpeakable() are true.
      */
     private fun startVoiceReadinessPolling() {
         voicePollingJob?.cancel()
         voicePollingJob = viewModelScope.launch {
-            // Immediate check — returning users with voices + model pass here without waiting
-            val missingNow = TTSManager.getMissingLanguages()
-            val modelReadyNow = GemmaManager.isModelReady(getApplication())
-            Log.d("Haq/Onboard", "Voice readiness immediate check: missing=$missingNow modelReady=$modelReadyNow")
-
-            if (missingNow.isEmpty() && modelReadyNow) {
-                Log.d("Haq/Onboard", "All voices and model ready immediately — verifying testSpeak")
-                val allReady = verifyAllVoicesSpeakable()
-                if (allReady) {
-                    transitionToLanguageSelect()
-                    voicePollingJob = null
-                    return@launch
-                } else {
-                    Log.e("Haq/Onboard", "verifyAllVoicesSpeakable timed out — NOT advancing")
-                    // Fall through to the fallback poll loop
-                }
-            }
-
-            // Not ready — trigger silent voice downloads if needed
-            if (missingNow.isNotEmpty()) TTSManager.ensureAllVoicesDownloading()
-            updatePreparingStatus(missingNow.isNotEmpty(), !modelReadyNow)
-
-            val startTime = System.currentTimeMillis()
-            val timeoutMs = 120_000L // 2-minute max fallback
+            TTSManager.ensureAllVoicesDownloading()
 
             while (true) {
-                delay(5_000L) // 5s fallback poll interval
-
                 val missing = TTSManager.getMissingLanguages()
                 val modelReady = GemmaManager.isModelReady(getApplication())
                 updatePreparingStatus(missing.isNotEmpty(), !modelReady)
-                Log.d("Haq/Onboard", "Voice readiness fallback poll: missing=$missing modelReady=$modelReady")
+                Log.d("Haq/Onboard", "Voice readiness poll: missing=$missing modelReady=$modelReady")
 
-                if (missing.isEmpty() && modelReady) {
-                    Log.d("Haq/Onboard", "All voices and model ready (fallback poll) — verifying testSpeak")
-                    val allReady = verifyAllVoicesSpeakable()
-                    if (allReady) {
+                if (modelReady) {
+                    Log.d("Haq/Onboard", "Model ready — verifying testSpeak before onboarding")
+                    if (verifyAllVoicesSpeakable()) {
                         transitionToLanguageSelect()
                         break
-                    } else {
-                        Log.e("Haq/Onboard", "verifyAllVoicesSpeakable timed out — NOT advancing")
-                        // Continue polling
                     }
+                } else if (missing.isNotEmpty()) {
+                    TTSManager.ensureAllVoicesDownloading()
                 }
 
-                val elapsed = System.currentTimeMillis() - startTime
-                if (elapsed > timeoutMs) {
-                    Log.w("Haq/Onboard", "Readiness timeout — proceeding with missing=$missing modelReady=$modelReady")
-                    val allReady = verifyAllVoicesSpeakable()
-                    if (allReady) {
-                        transitionToLanguageSelect()
-                    } else {
-                        Log.e("Haq/Onboard", "verifyAllVoicesSpeakable timed out — NOT advancing")
-                    }
+                if (step.value !is OnboardingStep.PreparingVoices &&
+                    step.value !is OnboardingStep.LanguageSelect
+                ) {
                     break
                 }
+
+                delay(5_000L)
             }
             voicePollingJob = null
         }

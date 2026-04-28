@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <queries>
+        <package android:name="com.google.android.tts" />
+        <package android:name="com.google.android.googlequicksearchbox" />
+    </queries>
+
     <!--
         INTERNET is the ONE exception to the no-network rule.
         It is used solely for the one-time first-launch model download.
