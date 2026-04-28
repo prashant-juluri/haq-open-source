@@ -2,6 +2,7 @@ package com.haq.app
 
 import android.app.Application
 import android.content.Context
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -292,19 +293,54 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 "profile=${activeProfile?.name} queryLength=${contextualQuery.length}")
 
             val fullResponse = StringBuilder()
+            val sentenceBuffer = StringBuilder()
+            val langCode = _activeLanguage.value
             try {
                 GemmaManager.generateResponse(contextualQuery).collect { token ->
                     fullResponse.append(token)
+                    sentenceBuffer.append(token)
                     _responseText.value = fullResponse.toString()
+
+                    val buf = sentenceBuffer.toString()
+                    val boundaryIdx = buf.indexOfFirst {
+                        it == '.' || it == '?' || it == '!' || it == '।'
+                    }
+                    if (boundaryIdx >= 0) {
+                        val sentence = buf
+                            .substring(0, boundaryIdx + 1)
+                            .replace("**", "")
+                            .replace("*", "")
+                            .replace("#", "")
+                            .trim()
+                        if (sentence.length >= 15) {
+                            TTSManager.speak(
+                                text = sentence,
+                                languageCode = langCode,
+                                queueMode = TextToSpeech.QUEUE_ADD,
+                                onOutputError = {
+                                    Log.w("Haq/VM", "Sentence speak failed for $langCode — skipping sentence")
+                                },
+                            )
+                        }
+                        sentenceBuffer.clear()
+                        sentenceBuffer.append(buf.substring(boundaryIdx + 1))
+                    }
                 }
-                // Speak the complete response in the profile's language
-                val ttsText = fullResponse.toString()
+                // Speak any text remaining after the stream ends (no trailing punctuation)
+                val remaining = sentenceBuffer.toString()
                     .replace("**", "")
                     .replace("*", "")
                     .replace("#", "")
                     .trim()
-                if (ttsText.isNotEmpty()) {
-                    TTSManager.speak(text = ttsText, languageCode = _activeLanguage.value)
+                if (remaining.length >= 5) {
+                    TTSManager.speak(
+                        text = remaining,
+                        languageCode = langCode,
+                        queueMode = TextToSpeech.QUEUE_ADD,
+                        onOutputError = {
+                            Log.w("Haq/VM", "Remaining speak failed for $langCode — skipping")
+                        },
+                    )
                 }
             } catch (e: CancellationException) {
                 Log.d("Haq/VM", "Query cancelled after ${fullResponse.length} chars")

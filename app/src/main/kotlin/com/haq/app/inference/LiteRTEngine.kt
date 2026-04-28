@@ -43,6 +43,15 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
         engineScope.launch {
             try {
                 val modelPath = modelFilePath()
+                // Clear stale xnnpack cache files before creating the engine.
+                // A DYNAMIC_UPDATE_SLICE error on first launch is caused by leftover
+                // cache files from a previous install. Delete them once here so the
+                // engine always starts from a clean cache directory.
+                context.cacheDir.listFiles { f ->
+                    f.name.endsWith(".xnnpack_cache")
+                }?.forEach { it.delete() }
+                Log.d("Haq/Gemma", "Cleared xnnpack caches")
+
                 val config = EngineConfig(
                     modelPath,
                     Backend.CPU(),

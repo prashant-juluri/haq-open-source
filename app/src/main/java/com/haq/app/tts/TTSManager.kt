@@ -2,6 +2,7 @@ package com.haq.app.tts
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
@@ -9,7 +10,10 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Locale
+import kotlin.coroutines.resume
 
 object TTSManager {
 
@@ -17,6 +21,9 @@ object TTSManager {
 
     private var tts: TextToSpeech? = null
     private var isReady = false
+
+    // Stored on first init() so reinitialiseAndWait() can restart without a Context parameter.
+    private var appContext: Context? = null
 
     // ── Ready state ───────────────────────────────────────────────────────────
 
@@ -180,6 +187,7 @@ object TTSManager {
             Log.d("Haq/TTS", "Already initialised, skipping. engine=${tts?.defaultEngine}")
             return
         }
+        appContext = context.applicationContext
 
         val googleInstalled = isGoogleTtsInstalled(context)
         Log.d("Haq/TTS", "Google TTS installed: $googleInstalled")
@@ -224,27 +232,32 @@ object TTSManager {
     // A fresh per-call listener is used so each onComplete callback is isolated
     // to its own utteranceId — no shared map, no race condition.
 
-    fun speak(text: String, languageCode: String, onComplete: (() -> Unit)? = null, onOutputError: (() -> Unit)? = null) {
+    fun speak(
+        text: String,
+        languageCode: String,
+        queueMode: Int = TextToSpeech.QUEUE_FLUSH,
+        onComplete: (() -> Unit)? = null,
+        onOutputError: (() -> Unit)? = null,
+        silent: Boolean = false,
+    ) {
         if (!isReady) {
-            // TTS unavailable — fire callback immediately so flow can continue
-            onComplete?.invoke()
+            // TTS unavailable — treat as output error for callers that distinguish
+            // (e.g. testSpeak must return false, not true, when engine is not ready).
+            onOutputError?.invoke() ?: onComplete?.invoke()
             return
         }
 
         val voice = findBestVoice(languageCode)
-        if (voice != null) {
-            // Stub voices ending in "-language" have no synthesis data — skip them.
-            if (voice.name.endsWith("-language")) {
-                Log.w("Haq/TTS", "Voice ${voice.name} is a stub — no audio data, skipping")
-                onComplete?.invoke()
-                return
-            }
-            tts?.voice = voice
-            Log.d("Haq/TTS", "speak() using voice=${voice.name} for lang=$languageCode")
-        } else {
-            Log.w("Haq/TTS", "speak() no voice found, using device locale")
-            tts?.setLanguage(Locale.getDefault())
+        if (voice == null || voice.name.endsWith("-language")) {
+            // No real voice available — fire onOutputError so recovery can reinitialise.
+            // Calling onComplete here would leave the app thinking speech succeeded.
+            Log.w("Haq/TTS", "speak(): stub or no voice for $languageCode — invoking onOutputError")
+            cachedVoices.remove(languageCode)
+            onOutputError?.invoke() ?: onComplete?.invoke()
+            return
         }
+        tts?.voice = voice
+        Log.d("Haq/TTS", "speak() using voice=${voice.name} for lang=$languageCode")
 
         // Strip markdown formatting before speaking
         val ttsText = text.replace("**", "").replace("*", "").replace("#", "").trim()
@@ -270,32 +283,40 @@ object TTSManager {
                 if (uid == utteranceId) onComplete?.invoke()
             }
 
-            // ERROR_OUTPUT (-4) means voice synthesis data is missing.
-            // Evict the cached voice so the next call rescans.
+            // Samsung with Google voices fires the no-code onError instead of the
+            // two-arg version for -4 output errors. Since speak() only reaches this
+            // point with a real (non-stub) voice, any codeless error is treated as
+            // an output error so speakOnboarding() receives the correct signal.
+            // Cache is NOT evicted — the voice object is still valid after -4.
             @Suppress("DEPRECATION")
             override fun onError(uid: String?) {
-                Log.e("Haq/TTS", "onError: $uid — evicting cached voice for $languageCode")
+                if (uid != utteranceId) return
+                Log.e("Haq/TTS", "onError uid=$uid code=(none) invoking onOutputError for $languageCode")
                 _isSpeaking.value = false
-                cachedVoices.remove(languageCode)
-                if (uid == utteranceId) onComplete?.invoke()
+                if (onOutputError != null) {
+                    onOutputError.invoke()
+                } else {
+                    onComplete?.invoke()
+                }
             }
 
             override fun onError(uid: String?, errorCode: Int) {
-                Log.e("Haq/TTS", "onError: $uid code=$errorCode — evicting cached voice for $languageCode")
+                if (uid != utteranceId) return
+                Log.e("Haq/TTS", "onError uid=$uid code=$errorCode invoking onOutputError for $languageCode")
                 _isSpeaking.value = false
-                cachedVoices.remove(languageCode)
-                if (uid == utteranceId) {
-                    if (errorCode == TextToSpeech.ERROR_OUTPUT && onOutputError != null) {
-                        onOutputError.invoke()
-                    } else {
-                        onComplete?.invoke()
-                    }
+                if (onOutputError != null) {
+                    onOutputError.invoke()
+                } else {
+                    onComplete?.invoke()
                 }
             }
         })
 
-        Log.d("Haq/TTS", "speak() utteranceId=$utteranceId textLength=${ttsText.length}")
-        tts?.speak(ttsText, TextToSpeech.QUEUE_ADD, null, utteranceId)
+        val params: Bundle? = if (silent) Bundle().apply {
+            putString(TextToSpeech.Engine.KEY_PARAM_VOLUME, "0")
+        } else null
+        Log.d("Haq/TTS", "speak() utteranceId=$utteranceId queueMode=$queueMode textLength=${ttsText.length} silent=$silent")
+        tts?.speak(ttsText, queueMode, params, utteranceId)
     }
 
     /**
@@ -337,6 +358,80 @@ object TTSManager {
             TextToSpeech(context, listener, GOOGLE_TTS_PACKAGE)
         } else {
             TextToSpeech(context, listener)
+        }
+    }
+
+    /**
+     * Shuts down the current TTS engine, creates a new one, and waits until the voice list
+     * stabilises. Samsung loads voices asynchronously after onInit fires — the initial list
+     * may contain only ~14 stubs. Polling continues until the count exceeds 100 and is
+     * stable for 3 consecutive 300 ms checks, or until the 10-second timeout.
+     * Clears [cachedVoices] at the end so [findBestVoice] re-scans the fresh list.
+     * No delay() is needed after calling this function.
+     */
+    suspend fun reinitialiseAndWait() {
+        suspendCancellableCoroutine<Unit> { cont ->
+            Log.d("Haq/TTS", "reinitialiseAndWait: shutting down")
+            tts?.shutdown()
+            tts = TextToSpeech(appContext) { status ->
+                Log.d("Haq/TTS", "reinitialiseAndWait: onInit status=$status")
+                if (cont.isActive) cont.resume(Unit)
+            }
+        }
+
+        // Poll until voice list stabilises or timeout.
+        // Samsung loads voices asynchronously after onInit.
+        val timeoutMs = 10_000L
+        val startTime = System.currentTimeMillis()
+        var lastCount = 0
+        var stableCount = 0
+
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            delay(300L)
+            val currentCount = tts?.voices?.size ?: 0
+            Log.d("Haq/TTS", "reinitialiseAndWait: voices=$currentCount")
+            if (currentCount > 100 && currentCount == lastCount) {
+                stableCount++
+                if (stableCount >= 3) {
+                    // Count stable for 3 checks (900 ms) — done
+                    Log.d("Haq/TTS",
+                        "reinitialiseAndWait: voice list stable at $currentCount voices")
+                    break
+                }
+            } else {
+                stableCount = 0
+            }
+            lastCount = currentCount
+        }
+
+        cachedVoices.clear()
+        Log.d("Haq/TTS",
+            "reinitialiseAndWait: complete, final count=${tts?.voices?.size ?: 0}")
+    }
+
+    /** Removes a single language's cached voice so the next speak() runs a fresh findBestVoice(). */
+    fun clearCachedVoice(languageCode: String) {
+        cachedVoices.remove(languageCode)
+        Log.d("Haq/TTS", "clearCachedVoice: evicted $languageCode")
+    }
+
+    /**
+     * Attempts a silent test utterance in [languageCode] to verify voice data is downloaded.
+     * Returns true if synthesis succeeds (onDone fires), false if ERROR_OUTPUT (-4) fires.
+     *
+     * [checkLanguageSupport] only checks voice list entries and returns true for stub voices
+     * that have no synthesis data. Always use this function during PreparingVoices to confirm
+     * real voice data is present before advancing.
+     */
+    suspend fun testSpeak(languageCode: String): Boolean {
+        return suspendCancellableCoroutine { cont ->
+            speak(
+                text = ".",
+                languageCode = languageCode,
+                silent = true,
+                onComplete = { if (cont.isActive) cont.resume(true) },
+                onOutputError = { if (cont.isActive) cont.resume(false) },
+            )
         }
     }
 

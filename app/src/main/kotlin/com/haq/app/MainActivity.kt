@@ -1,16 +1,9 @@
 package com.haq.app
 
 import android.Manifest
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,7 +11,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.ViewModelProvider
 import com.haq.app.onboarding.OnboardingViewModel
 import com.haq.app.tts.TTSManager
 import androidx.compose.animation.animateColorAsState
@@ -101,51 +93,10 @@ enum class AppState(val label: String) {
 
 class MainActivity : ComponentActivity() {
 
-    private var ttsDataReceiver: BroadcastReceiver? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        registerTtsDataReceiver()
         setContent { HaqTheme { HaqScreen() } }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        ttsDataReceiver?.let { unregisterReceiver(it) }
-        ttsDataReceiver = null
-    }
-
-    /**
-     * Registers for ACTION_TTS_DATA_INSTALLED — the primary signal that Google TTS
-     * has finished downloading voice data. On receipt, reinitialises TTS so the new
-     * voice is picked up, then notifies OnboardingViewModel after a 1-second flush delay.
-     */
-    private fun registerTtsDataReceiver() {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent?) {
-                if (intent?.action != TextToSpeech.Engine.ACTION_TTS_DATA_INSTALLED) return
-                Log.d("Haq/TTS", "ACTION_TTS_DATA_INSTALLED received — notifying OnboardingViewModel")
-                TTSManager.reinitialise(context) {
-                    // 1-second delay gives Google TTS time to flush audio file writes
-                    // before we re-scan the voice list in checkAndAdvanceIfReady().
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        ViewModelProvider(this@MainActivity)
-                            .get(OnboardingViewModel::class.java)
-                            .onTtsDataInstalled()
-                    }, 1000L)
-                }
-            }
-        }
-        ttsDataReceiver = receiver
-        val filter = IntentFilter(TextToSpeech.Engine.ACTION_TTS_DATA_INSTALLED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, RECEIVER_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(receiver, filter)
-        }
-        Log.d("Haq/TTS", "TTS data receiver registered")
     }
 }
 
@@ -294,14 +245,10 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
     val supportedLanguages by vm.supportedLanguages.collectAsStateWithLifecycle()
     val preparingStatus    by vm.preparingStatus.collectAsStateWithLifecycle()
 
-    // When the Complete step arrives, speak the message then hand off.
+    // When the Complete step arrives, speak the message via speakOnboarding() then hand off.
     LaunchedEffect(step) {
         if (step is OnboardingStep.Complete) {
-            TTSManager.speak(
-                text = vm.getCompletionText(vm.selectedLanguage),
-                languageCode = vm.selectedLanguage,
-                onComplete = { onComplete() },
-            )
+            vm.speakCompletion { onComplete() }
         }
     }
 
@@ -558,18 +505,8 @@ private fun ConversationOnboardingScreen(
         else -> ""
     }
 
-    // Introduction fires TTS then hands off to the ViewModel chain.
-    // All subsequent questions are spoken by ViewModel.startNextQuestion(), which
-    // also increments micActivationEvent — observed below to auto-activate the mic.
-    LaunchedEffect(step) {
-        if (step is OnboardingStep.Introduction) {
-            TTSManager.speak(
-                text = vm.getIntroductionText(lang),
-                languageCode = lang,
-                onComplete = { vm.onIntroductionComplete() },
-            )
-        }
-    }
+    // Introduction is spoken by OnboardingViewModel.enterIntroduction() via speakOnboarding().
+    // All question TTS goes through speakOnboarding() for -4 retry recovery.
 
     // Auto-activate mic whenever the ViewModel signals a new question is ready.
     // micActivationEvent starts at 0 — only fire on increments (> 0).

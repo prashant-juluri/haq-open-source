@@ -29,9 +29,13 @@ object GemmaManager {
     /**
      * Returns true only if the model file exists and meets the minimum size threshold.
      * A file smaller than [MIN_MODEL_SIZE] is an incomplete download — treat as not ready.
+     *
+     * Accepts an optional [context] so callers (e.g. OnboardingViewModel) that run before
+     * [GemmaManager.init] is called can still check the model file directly, without
+     * depending on [appContext] being set. Falls back to [appContext] if null.
      */
-    fun isModelReady(): Boolean {
-        val ctx = appContext ?: return false
+    fun isModelReady(context: Context? = null): Boolean {
+        val ctx = context?.applicationContext ?: appContext ?: return false
         val modelFile = File(ctx.filesDir, ModelDownloadManager.MODEL_FILENAME)
         val ready = modelFile.exists() && modelFile.length() > MIN_MODEL_SIZE
         Log.d("Haq/Gemma", "isModelReady=$ready size=${if (modelFile.exists()) modelFile.length() else 0}")
