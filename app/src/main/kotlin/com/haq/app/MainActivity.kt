@@ -1,9 +1,14 @@
 package com.haq.app
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,6 +16,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import com.haq.app.onboarding.OnboardingViewModel
 import com.haq.app.tts.TTSManager
 import androidx.compose.animation.animateColorAsState
@@ -93,10 +99,45 @@ enum class AppState(val label: String) {
 
 class MainActivity : ComponentActivity() {
 
+    private var ttsDataReceiver: BroadcastReceiver? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        registerTtsDataReceiver()
         setContent { HaqTheme { HaqScreen() } }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        ttsDataReceiver?.let { unregisterReceiver(it) }
+        ttsDataReceiver = null
+    }
+
+    /**
+     * Registers for ACTION_TTS_DATA_INSTALLED — fired by Google TTS when it finishes
+     * writing a voice pack to disk. On receipt, notifies OnboardingViewModel so it can
+     * reinitialise TTS, pick up the new data, and re-run the testSpeak gate.
+     */
+    private fun registerTtsDataReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent?) {
+                if (intent?.action != TextToSpeech.Engine.ACTION_TTS_DATA_INSTALLED) return
+                Log.d("Haq/TTS", "ACTION_TTS_DATA_INSTALLED received — notifying OnboardingViewModel")
+                ViewModelProvider(this@MainActivity)
+                    .get(OnboardingViewModel::class.java)
+                    .onTtsDataInstalled()
+            }
+        }
+        ttsDataReceiver = receiver
+        val filter = IntentFilter(TextToSpeech.Engine.ACTION_TTS_DATA_INSTALLED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(receiver, filter)
+        }
+        Log.d("Haq/TTS", "TTS data receiver registered")
     }
 }
 

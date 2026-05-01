@@ -10,8 +10,10 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.coroutines.resume
 
@@ -52,6 +54,14 @@ object TTSManager {
         "en" to Locale("en", "IN"),
     )
 
+    private val TEST_UTTERANCES = mapOf(
+        "hi" to "नमस्ते",
+        "te" to "నమస్తే",
+        "ml" to "നമസ്കാരം",
+        "kn" to "ನಮಸ್ಕಾರ",
+        "en" to "hello",
+    )
+
     // ── Locale helper ─────────────────────────────────────────────────────────
 
     private fun localeFor(languageCode: String): Locale = when (languageCode) {
@@ -87,37 +97,48 @@ object TTSManager {
         val voices = tts?.voices ?: return null
         Log.d("Haq/TTS", "Finding voice for $languageCode total=${voices.size}")
 
-        // P1: non-OEM offline voice, exact locale
+        // Stubs (names ending in "-language") are excluded at every priority tier.
+        // Google TTS lists stub entries for languages whose data is not yet downloaded.
+        // If a stub wins here, speak() rejects it and fires onOutputError — preventing
+        // any real voice (including Samsung's) at lower priorities from being tried.
+        // By excluding stubs throughout, real Samsung voices are reachable at P3/P4
+        // whenever Google's local voice is missing or has been evicted from the list.
+
+        // P1: non-OEM offline non-stub voice, exact locale
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
             v.locale.country  == targetLocale.country &&
+            !v.name.endsWith("-language") &&
             !v.name.contains("samsung", ignoreCase = true) &&
             !v.name.contains("smt", ignoreCase = true) &&
             !v.isNetworkConnectionRequired
         }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P1 offline non-OEM: ${it.name}"); return it }
 
-        // P2: non-OEM online voice, exact locale
+        // P2: non-OEM online non-stub voice, exact locale
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
             v.locale.country  == targetLocale.country &&
+            !v.name.endsWith("-language") &&
             !v.name.contains("samsung", ignoreCase = true) &&
             !v.name.contains("smt", ignoreCase = true)
         }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P2 online non-OEM: ${it.name}"); return it }
 
-        // P3: any offline voice, exact locale
+        // P3: any offline non-stub voice, exact locale (Samsung fallback)
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
             v.locale.country  == targetLocale.country &&
+            !v.name.endsWith("-language") &&
             !v.isNetworkConnectionRequired
-        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P3 any offline: ${it.name}"); return it }
+        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P3 any offline non-stub: ${it.name}"); return it }
 
-        // P4: any voice, exact locale
+        // P4: any non-stub voice, exact locale
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
-            v.locale.country  == targetLocale.country
-        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P4 any exact: ${it.name}"); return it }
+            v.locale.country  == targetLocale.country &&
+            !v.name.endsWith("-language")
+        }?.also { cachedVoices[languageCode] = it; Log.d("Haq/TTS", "P4 any non-stub exact: ${it.name}"); return it }
 
-        // P5: any non-stub voice, language only (stubs are excluded so they don't get cached)
+        // P5: any non-stub voice, language only
         voices.firstOrNull { v ->
             v.locale.language == targetLocale.language &&
             !v.name.endsWith("-language")
@@ -156,11 +177,28 @@ object TTSManager {
     }
 
     /**
+     * Calls setLanguage() for a single language. When Google TTS detects missing
+     * synthesis data, it begins a silent background download — no UI is shown.
+     * Safe to call at any time; idempotent if voice data is already present.
+     *
+     * Runs on [Dispatchers.IO] because setLanguage() IPC can block ~500 ms.
+     */
+    suspend fun ensureVoiceDownloading(languageCode: String) = withContext(Dispatchers.IO) {
+        val locale = REQUIRED_LANGUAGES.firstOrNull { it.first == languageCode }?.second
+            ?: Locale(languageCode, "IN")
+        val result = tts?.setLanguage(locale)
+        Log.d("Haq/TTS", "ensureVoiceDownloading($languageCode) result=$result")
+    }
+
+    /**
      * Calls setLanguage() for all 5 required languages. When Google TTS detects
      * missing synthesis data, it begins a silent background download — no UI is shown.
      * Safe to call at any time after init(). Idempotent for languages already present.
+     *
+     * Runs on [Dispatchers.IO] because each setLanguage() IPC call can block ~500 ms;
+     * keeping them off the main thread prevents dropped frames during PreparingVoices.
      */
-    fun ensureAllVoicesDownloading() {
+    suspend fun ensureAllVoicesDownloading() = withContext(Dispatchers.IO) {
         Log.d("Haq/TTS", "Requesting silent download for all languages")
         REQUIRED_LANGUAGES.forEach { (code, locale) ->
             val result = tts?.setLanguage(locale)
@@ -197,9 +235,22 @@ object TTSManager {
                 isReady = true
                 tts?.setSpeechRate(0.9f)
                 tts?.setPitch(1.0f)
-                Log.d("Haq/TTS", "TTS ready engine=${tts?.defaultEngine}")
-                tts?.voices?.forEach { v ->
-                    Log.d("Haq/TTS", "Voice: ${v.name} ${v.locale} q=${v.quality} net=${v.isNetworkConnectionRequired}")
+                // defaultEngine returns the *system* default (may be Samsung SMT even when we
+                // explicitly bound to Google TTS). Log the engine list instead so we can verify
+                // the binding actually worked.
+                val engines = tts?.engines ?: emptyList()
+                Log.d("Haq/TTS", "TTS init SUCCESS — available engines: ${engines.map { it.name }}")
+                val googleBound = engines.any { it.name == GOOGLE_TTS_PACKAGE }
+                Log.d("Haq/TTS", "Google TTS in engine list: $googleBound  systemDefault=${tts?.defaultEngine}")
+                val voices = tts?.voices ?: emptySet()
+                val googleVoiceCount = voices.count { v ->
+                    // Google TTS voices follow xx-yy-x-zzz-local/network pattern.
+                    // Samsung SMT voices use smt-* or samsung-* naming.
+                    v.name.matches(Regex("[a-z]{2}-[a-z]{2}-x-[a-z]{3,5}-(local|network)"))
+                }
+                Log.d("Haq/TTS", "Voices: total=${voices.size} google-pattern=$googleVoiceCount")
+                if (googleVoiceCount == 0) {
+                    Log.e("Haq/TTS", "WARN: no Google TTS voices found — OEM engine may have taken over")
                 }
                 _ttsReady.value = true
             } else {
@@ -300,12 +351,12 @@ object TTSManager {
             // two-arg version for -4 output errors. Since speak() only reaches this
             // point with a real (non-stub) voice, any codeless error is treated as
             // an output error so speakOnboarding() receives the correct signal.
-            // Cache is NOT evicted — the voice object is still valid after -4.
             @Suppress("DEPRECATION")
             override fun onError(uid: String?) {
                 if (uid != utteranceId) return
                 Log.e("Haq/TTS", "onError uid=$uid code=(none) invoking onOutputError for $languageCode")
                 _isSpeaking.value = false
+                clearCachedVoice(languageCode)
                 if (onOutputError != null) {
                     onOutputError.invoke()
                 } else {
@@ -317,6 +368,9 @@ object TTSManager {
                 if (uid != utteranceId) return
                 Log.e("Haq/TTS", "onError uid=$uid code=$errorCode invoking onOutputError for $languageCode")
                 _isSpeaking.value = false
+                if (errorCode == TextToSpeech.ERROR_OUTPUT) {
+                    clearCachedVoice(languageCode)
+                }
                 if (onOutputError != null) {
                     onOutputError.invoke()
                 } else {
@@ -325,8 +379,12 @@ object TTSManager {
             }
         })
 
+        // Use 0.01f (not 0f) for silent mode. A volume of exactly 0f bypasses the synthesis
+        // pipeline on some engines (returning ERROR_OUTPUT immediately) and never triggers
+        // the background voice-data download. At 0.01f the utterance is inaudible but the
+        // engine runs the full synthesis path, which triggers lazy voice data downloads.
         val params: Bundle? = if (silent) Bundle().apply {
-            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0f)
+            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0.01f)
         } else null
         Log.d("Haq/TTS", "speak() utteranceId=$utteranceId queueMode=$queueMode textLength=${ttsText.length} silent=$silent")
         tts?.speak(ttsText, queueMode, params, utteranceId)
@@ -397,7 +455,10 @@ object TTSManager {
                     tts?.setSpeechRate(0.9f)
                     tts?.setPitch(1.0f)
                     _ttsReady.value = true
-                    Log.d("Haq/TTS", "reinitialiseAndWait: ready engine=${tts?.defaultEngine}")
+                    // Log engine list, not defaultEngine — defaultEngine is the system default
+                    // (e.g. com.samsung.SMT) even when we are bound to com.google.android.tts.
+                    val engines = tts?.engines?.map { it.name } ?: emptyList()
+                    Log.d("Haq/TTS", "reinitialiseAndWait: ready engines=$engines systemDefault=${tts?.defaultEngine}")
                 } else {
                     Log.e("Haq/TTS", "reinitialiseAndWait: init failed status=$status")
                 }
@@ -452,7 +513,7 @@ object TTSManager {
     suspend fun testSpeak(languageCode: String): Boolean {
         return suspendCancellableCoroutine { cont ->
             speak(
-                text = ".",
+                text = TEST_UTTERANCES[languageCode] ?: TEST_UTTERANCES.getValue("en"),
                 languageCode = languageCode,
                 silent = true,
                 onComplete = { if (cont.isActive) cont.resume(true) },

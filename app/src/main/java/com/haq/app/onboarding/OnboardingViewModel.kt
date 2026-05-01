@@ -14,10 +14,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import java.util.Locale
 import kotlin.coroutines.resume
 
 sealed class OnboardingStep {
@@ -38,18 +36,13 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         ProfileManager.init(application)
-        // Wait for TTS engine to become ready, then begin warming voice packs in
-        // parallel with the model download. The flow only advances once both are ready.
-        viewModelScope.launch {
-            TTSManager.ttsReady.first { it }
-            Log.d("Haq/Onboard", "TTS ready — starting voice preparation")
-            startVoiceReadinessPolling()
-        }
+        // LanguageSelect is shown immediately — no voice pre-loading.
+        // Readiness gating happens after the user picks a language.
     }
 
     // ── Step state ───────────────────────────────────────────────────────────────
 
-    private val _step = MutableStateFlow<OnboardingStep>(OnboardingStep.PreparingVoices)
+    private val _step = MutableStateFlow<OnboardingStep>(OnboardingStep.LanguageSelect)
     val step: StateFlow<OnboardingStep> = _step.asStateFlow()
 
     private val _listenState = MutableStateFlow(OnboardingListenState.IDLE)
@@ -88,73 +81,106 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     // Active voice readiness polling coroutine (fallback only)
     private var voicePollingJob: Job? = null
 
-    // ── Voice readiness polling ──────────────────────────────────────────────────
+    // ── Voice + model readiness (single language) ───────────────────────────────
 
     /**
-     * Tests each of the 5 supported languages with [TTSManager.testSpeak].
-     * [TTSManager.checkLanguageSupport] only checks voice list entries — stub voices and
-     * real-looking non-stub entries can both exist without downloaded synthesis data and
-     * produce ERROR_OUTPUT (-4). This function verifies actual synthesis works.
-     *
-     * Returns true only when ALL 5 languages pass testSpeak(). On failure it keeps the
-     * blocking screen visible and re-triggers silent voice download so the next poll can
-     * pick up newly installed data.
+     * Attempts a silent test utterance for [languageCode]. Returns true when synthesis
+     * succeeds. On failure clears the cached voice so [TTSManager.findBestVoice] re-scans
+     * on the next attempt. Does NOT reinitialise the engine — that would interrupt any
+     * in-progress Google TTS background download.
      */
-    private suspend fun verifyAllVoicesSpeakable(): Boolean {
-        val allLangs = listOf("hi", "te", "ml", "kn", "en")
-
-        val failed = mutableListOf<String>()
-        for (lang in allLangs) {
-            val ok = TTSManager.testSpeak(lang)
-            Log.d("Haq/Onboard", "verifyAllVoicesSpeakable: testSpeak($lang)=$ok")
-            if (!ok) failed.add(lang)
-        }
-
-        if (failed.isEmpty()) {
-            Log.d("Haq/Onboard", "verifyAllVoicesSpeakable: all languages pass testSpeak")
-            return true
-        }
-
-        _step.value = OnboardingStep.PreparingVoices
-        Log.w("Haq/Onboard", "voice data missing for langs=$failed — waiting for silent download")
-        TTSManager.ensureAllVoicesDownloading()
+    private suspend fun verifySingleVoiceSpeakable(languageCode: String): Boolean {
+        val ok = TTSManager.testSpeak(languageCode)
+        Log.d("Haq/Onboard", "verifySingleVoiceSpeakable: testSpeak($languageCode)=$ok")
+        if (ok) return true
+        Log.w("Haq/Onboard", "voice data missing for lang=$languageCode — waiting for silent download")
+        TTSManager.clearCachedVoice(languageCode)
         return false
     }
 
     /**
-     * Triggers silent voice downloads immediately, then polls until both the model and
-     * real synthesizable voice packs are ready. The app must not advance into onboarding
-     * until both conditions are satisfied.
+     * Called by MainActivity when ACTION_TTS_DATA_INSTALLED fires — Google TTS has finished
+     * writing the selected language's voice pack to disk. Always reinitialises TTS so the
+     * engine picks up the new data files regardless of which step we are on.
      *
-     * Advances to LanguageSelect only when BOTH GemmaManager.isModelReady(getApplication())
-     * and verifyAllVoicesSpeakable() are true.
+     * - PreparingVoices: re-runs the testSpeak gate and advances to Introduction if ready.
+     * - Any other step: reinit runs silently so subsequent speak() calls (onboarding
+     *   questions or Gemma responses) pick up the newly downloaded voice without a restart.
+     *   This handles the case where the escape hatch fired before the download finished.
      */
-    private fun startVoiceReadinessPolling() {
+    fun onTtsDataInstalled() {
+        Log.d("Haq/Onboard",
+            "onTtsDataInstalled — reinitialising TTS for $selectedLanguage (step=${_step.value})")
+        viewModelScope.launch {
+            TTSManager.reinitialiseAndWait()
+            TTSManager.clearCachedVoice(selectedLanguage)
+
+            if (_step.value is OnboardingStep.PreparingVoices) {
+                val modelReady = GemmaManager.isModelReady(getApplication())
+                if (!modelReady) {
+                    Log.d("Haq/Onboard", "TTS data installed but model not ready — poll loop will pick it up")
+                    return@launch
+                }
+                if (verifySingleVoiceSpeakable(selectedLanguage)) {
+                    voicePollingJob?.cancel()
+                    voicePollingJob = null
+                    enterIntroduction()
+                }
+                // If testSpeak still fails the outer poll continues retrying every 5 s.
+            } else {
+                // Beyond PreparingVoices (escape hatch already fired, or main app).
+                // Voice is now reinitialised — subsequent speak() calls will find the
+                // newly downloaded voice via findBestVoice() without an app restart.
+                val voiceReady = TTSManager.checkLanguageSupport(selectedLanguage)
+                Log.d("Haq/Onboard",
+                    "onTtsDataInstalled: step=${_step.value} — silent reinit done, " +
+                    "$selectedLanguage voiceReady=$voiceReady")
+            }
+        }
+    }
+
+    /**
+     * Triggers a silent download for [languageCode], then polls every 5 s until both
+     * the model file and the selected language's voice data are ready. Advances to
+     * Introduction once both conditions are satisfied, or after 60 s of voice failures
+     * (escape hatch so the user is never blocked indefinitely).
+     */
+    private fun startSingleLanguageReadinessPolling(languageCode: String) {
         voicePollingJob?.cancel()
         voicePollingJob = viewModelScope.launch {
-            TTSManager.ensureAllVoicesDownloading()
+            TTSManager.ensureVoiceDownloading(languageCode)
+
+            var voiceFailCount = 0
+            val voiceFailThreshold = 12 // 12 × 5 s = 60 s after model is ready
 
             while (true) {
-                val missing = TTSManager.getMissingLanguages()
                 val modelReady = GemmaManager.isModelReady(getApplication())
-                updatePreparingStatus(missing.isNotEmpty(), !modelReady)
-                Log.d("Haq/Onboard", "Voice readiness poll: missing=$missing modelReady=$modelReady")
+                val voiceMissing = !TTSManager.checkLanguageSupport(languageCode)
+                updatePreparingStatus(voiceMissing, !modelReady)
+                Log.d("Haq/Onboard",
+                    "Single-lang readiness poll: lang=$languageCode " +
+                    "modelReady=$modelReady voiceMissing=$voiceMissing " +
+                    "voiceFails=$voiceFailCount")
+
+                // Re-trigger download each cycle so Google TTS keeps downloading
+                // even when the voice entry exists in the list but has no data.
+                TTSManager.ensureVoiceDownloading(languageCode)
 
                 if (modelReady) {
-                    Log.d("Haq/Onboard", "Model ready — verifying testSpeak before onboarding")
-                    if (verifyAllVoicesSpeakable()) {
-                        transitionToLanguageSelect()
+                    if (verifySingleVoiceSpeakable(languageCode)) {
+                        enterIntroduction()
                         break
                     }
-                } else if (missing.isNotEmpty()) {
-                    TTSManager.ensureAllVoicesDownloading()
+                    voiceFailCount++
+                    if (voiceFailCount >= voiceFailThreshold) {
+                        Log.w("Haq/Onboard",
+                            "testSpeak failed $voiceFailCount times — advancing despite missing voice")
+                        enterIntroduction()
+                        break
+                    }
                 }
 
-                if (step.value !is OnboardingStep.PreparingVoices &&
-                    step.value !is OnboardingStep.LanguageSelect
-                ) {
-                    break
-                }
+                if (_step.value !is OnboardingStep.PreparingVoices) break
 
                 delay(5_000L)
             }
@@ -162,38 +188,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun updatePreparingStatus(voicesMissing: Boolean, modelMissing: Boolean) {
+    private fun updatePreparingStatus(voiceMissing: Boolean, modelMissing: Boolean) {
         _preparingStatus.value = when {
-            modelMissing && voicesMissing -> "Downloading model and voices..."
-            modelMissing                  -> "Downloading AI model..."
-            else                          -> "Preparing voices..."
-        }
-    }
-
-    /**
-     * Computes supported languages from actual voice availability and advances
-     * the step, applying the same single-language auto-select logic as before.
-     */
-    private fun transitionToLanguageSelect() {
-        val available = listOf("hi", "te", "ml", "kn", "en")
-            .filter { TTSManager.checkLanguageSupport(it) }
-        Log.d("Haq/Onboard", "Voice prep done, available=$available")
-
-        val supported = if (available.isEmpty()) listOf("hi", "te", "ml", "kn", "en") else available
-        _supportedLanguages.value = supported
-
-        when {
-            supported.isEmpty() -> {
-                // Should never happen given the fallback above, but be safe
-                selectedLanguage = Locale.getDefault().language
-                    .takeIf { it in listOf("hi", "te", "ml", "kn", "en") } ?: "en"
-                enterIntroduction()
-            }
-            supported.size == 1 -> {
-                selectedLanguage = supported.first()
-                enterIntroduction()
-            }
-            else -> _step.value = OnboardingStep.LanguageSelect
+            modelMissing && voiceMissing -> "Downloading model and voices..."
+            modelMissing                 -> "Downloading AI model..."
+            else                         -> "Preparing voices..."
         }
     }
 
@@ -274,13 +273,24 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     /**
      * Speaks [text] in [languageCode] with up to 4 automatic retries on ERROR_OUTPUT (-4).
      *
-     * On failure, shows PreparingVoices with a language-specific status message, calls
-     * [TTSManager.reinitialiseAndWait] (blocks until TTS onInit fires), then sets the step
-     * back to Introduction and retries. Returns as soon as a speak succeeds, or after
-     * all retries are exhausted.
+     * On the first failure, reinitialises TTS once and retries. Subsequent failures just
+     * clear the voice cache and wait 500 ms — repeated reinits don't fix missing voice data,
+     * only waste ~7 s each.
+     *
+     * Step management during reinit:
+     * - Introduction step only: shows PreparingVoices while reinit runs, then restores to
+     *   Introduction. At Introduction entry `micActivationEvent == 0`, so no spurious mic
+     *   activation happens on the re-compose.
+     * - All other steps (AskState, AskCaste, …): reinit runs silently without changing the
+     *   step. Changing the step would unmount/remount ConversationOnboardingScreen and
+     *   re-fire LaunchedEffect(micActivationEvent) with the current (non-zero) value,
+     *   spuriously triggering STT before the question is spoken.
      */
     private suspend fun speakOnboarding(text: String, languageCode: String) {
         val maxRetries = 4
+        val stepOnEntry = _step.value
+        var reinitDone = false
+
         repeat(maxRetries) { attempt ->
             Log.d("Haq/Onboard", "speakOnboarding attempt ${attempt + 1}/$maxRetries lang=$languageCode")
             val success = suspendCancellableCoroutine<Boolean> { cont ->
@@ -292,18 +302,42 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 )
             }
             if (success) return
-            Log.w("Haq/Onboard", "speakOnboarding failed attempt ${attempt + 1} — reinitialising TTS")
-            _preparingStatus.value = when (languageCode) {
-                "te" -> "తెలుగు స్వరం సిద్ధమవుతోంది..."
-                "hi" -> "हिंदी आवाज़ तैयार हो रही है..."
-                "ml" -> "മലയാളം ശബ്ദം തയ്യാറാകുന്നു..."
-                "kn" -> "ಕನ್ನಡ ಧ್ವನಿ ಸಿದ್ಧವಾಗುತ್ತಿದೆ..."
-                else -> "Preparing English voice..."
+
+            // Only reinit when a real (non-stub) voice was used but returned -4.
+            // If there is no real voice at all (checkLanguageSupport == false),
+            // reinit won't produce one — it just wastes ~4 s and forces another
+            // 4-second freeze between every question.
+            val hasRealVoice = TTSManager.checkLanguageSupport(languageCode)
+            if (!reinitDone && hasRealVoice) {
+                Log.w("Haq/Onboard", "speakOnboarding failed attempt ${attempt + 1} — reinitialising TTS (once)")
+                _preparingStatus.value = when (languageCode) {
+                    "te" -> "తెలుగు స్వరం సిద్ధమవుతోంది..."
+                    "hi" -> "हिंदी आवाज़ तैयार हो रही है..."
+                    "ml" -> "മലയാളം ശബ്ദം തയ്യാറാകുന്നു..."
+                    "kn" -> "ಕನ್ನಡ ಧ್ವನಿ ಸಿದ್ಧವಾಗುತ್ತಿದೆ..."
+                    else -> "Preparing English voice..."
+                }
+                // Only flash the PreparingVoices screen for Introduction. For question
+                // steps the screen must stay stable — unmounting it re-fires
+                // LaunchedEffect(micActivationEvent) on re-mount, triggering STT early.
+                if (stepOnEntry is OnboardingStep.Introduction) {
+                    _step.value = OnboardingStep.PreparingVoices
+                }
+                TTSManager.reinitialiseAndWait()
+                TTSManager.clearCachedVoice(languageCode)
+                if (stepOnEntry is OnboardingStep.Introduction) {
+                    _step.value = OnboardingStep.Introduction
+                }
+                reinitDone = true
+            } else {
+                // No real voice or reinit already done — skip the ~4 s reinit cycle.
+                // Just clear the cache so findBestVoice() re-scans on the next attempt.
+                Log.w("Haq/Onboard",
+                    "speakOnboarding failed attempt ${attempt + 1} — skipping reinit " +
+                    "(hasRealVoice=$hasRealVoice reinitDone=$reinitDone)")
+                TTSManager.clearCachedVoice(languageCode)
+                delay(200L)
             }
-            _step.value = OnboardingStep.PreparingVoices
-            TTSManager.reinitialiseAndWait()
-            TTSManager.clearCachedVoice(languageCode)
-            _step.value = OnboardingStep.Introduction
         }
         Log.e("Haq/Onboard", "speakOnboarding exhausted $maxRetries attempts for $languageCode — giving up")
     }
@@ -347,22 +381,18 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     // ── Step transitions ─────────────────────────────────────────────────────────
 
     /**
-     * Selects the language and advances to Introduction. After [startVoiceReadinessPolling]
-     * completes, all 5 voices should be available. The InstallingVoicePacks step is
-     * an edge case for when a language is still missing post-polling.
+     * Called when the user taps a language on the LanguageSelect screen. Saves the choice,
+     * then gates on model availability and the single selected language's voice pack.
+     *
+     * Fast path (returning users, model + voice already present): enters Introduction
+     * within one poll cycle (~1 s).
+     * Slow path (first launch): shows PreparingVoices and polls until both are ready.
      */
     fun selectLanguage(language: String) {
         selectedLanguage = language
-        val supported = TTSManager.checkLanguageSupport(language)
-        Log.d("Haq/Onboard", "selectLanguage: lang=$language supported=$supported")
-        if (supported) {
-            enterIntroduction()
-        } else {
-            // Edge case: voice still missing after PreparingVoices polling completed.
-            // Show wait screen; user can tap Continue once the voice downloads.
-            Log.w("Haq/Onboard", "Voice for $language still missing after prep — showing wait screen")
-            _step.value = OnboardingStep.InstallingVoicePacks
-        }
+        Log.d("Haq/Onboard", "selectLanguage: lang=$language — starting single-language readiness gate")
+        _step.value = OnboardingStep.PreparingVoices
+        startSingleLanguageReadinessPolling(language)
     }
 
     fun onIntroductionComplete() {
@@ -481,13 +511,15 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         TTSManager.speak(
                             text = getTapMicText(selectedLanguage),
                             languageCode = selectedLanguage,
+                            onOutputError = { /* voice unavailable — tap-mic prompt silent, wait for tap */ },
                         )
                         // Wait for manual tap — chain stops here
                     } else {
                         TTSManager.speak(
                             text = getRetryText(selectedLanguage),
                             languageCode = selectedLanguage,
-                            onComplete = { onMicPressed() },  // auto-restart after TTS
+                            onComplete = { onMicPressed() },
+                            onOutputError = { onMicPressed() }, // TTS failed — restart mic anyway
                         )
                     }
                 } else {
@@ -508,6 +540,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                     TTSManager.speak(
                         text = getTapMicText(selectedLanguage),
                         languageCode = selectedLanguage,
+                        onOutputError = { /* voice unavailable — silent, wait for tap */ },
                     )
                 } else {
                     delay(500L)
@@ -520,6 +553,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     /** Reset to start a fresh onboarding (for "add new profile" flow). */
     fun reset() {
         voicePollingJob?.cancel()
+        voicePollingJob = null
         selectedLanguage    = "hi"
         collectedName       = ""
         collectedState      = ""
@@ -531,8 +565,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         _micActivationEvent.value = 0
         _supportedLanguages.value = listOf("hi", "te", "ml", "kn", "en")
         _createdProfileId.value = -1
-        _step.value = OnboardingStep.PreparingVoices
-        // startVoiceReadinessPolling() does an immediate check and triggers downloads only if needed
-        startVoiceReadinessPolling()
+        _step.value = OnboardingStep.LanguageSelect
+        // Readiness polling starts only after the user picks a language (selectLanguage).
     }
 }
