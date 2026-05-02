@@ -5,6 +5,9 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -59,6 +62,25 @@ object GemmaManager {
     fun generateResponse(prompt: String): Flow<String> {
         Log.d("Haq/Gemma", "generateResponse() engine hashCode=${engine.hashCode()}")
         return engine.generateResponse(prompt)
+            .catch { e ->
+                // Status Code 13 = DYNAMIC_UPDATE_SLICE failure in prefill_1024 subgraph.
+                // On first launch the xnnpack delegate for subgraph 1 lazily initialises
+                // and conflicts with the partially-built cache from subgraph 0's init.
+                // Reinitialising gives the engine a clean slate; the second attempt
+                // reliably succeeds — which is exactly what "works on restart" demonstrates.
+                val isSubgraphInitFailure = e.message?.contains("Status Code: 13") == true
+                val ctx = appContext
+                if (isSubgraphInitFailure && ctx != null) {
+                    Log.w("Haq/Gemma", "Status Code 13 — reinitialising engine and retrying once")
+                    reinit(ctx)
+                    // Wait for the new engine to finish initialising before retrying
+                    engine.state.first { it !is EngineState.Loading }
+                    Log.d("Haq/Gemma", "Engine reinit complete, retrying query")
+                    emitAll(engine.generateResponse(prompt))
+                } else {
+                    throw e
+                }
+            }
     }
 
     fun shutdown() {
