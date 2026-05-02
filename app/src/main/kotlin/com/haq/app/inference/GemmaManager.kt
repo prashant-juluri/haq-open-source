@@ -2,8 +2,10 @@ package com.haq.app.inference
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -33,13 +35,16 @@ object GemmaManager {
      * Accepts an optional [context] so callers (e.g. OnboardingViewModel) that run before
      * [GemmaManager.init] is called can still check the model file directly, without
      * depending on [appContext] being set. Falls back to [appContext] if null.
+     *
+     * Dispatches to [Dispatchers.IO] so the [File.exists] and [File.length] syscalls
+     * never block the main thread.
      */
-    fun isModelReady(context: Context? = null): Boolean {
-        val ctx = context?.applicationContext ?: appContext ?: return false
+    suspend fun isModelReady(context: Context? = null): Boolean = withContext(Dispatchers.IO) {
+        val ctx = context?.applicationContext ?: appContext ?: return@withContext false
         val modelFile = File(ctx.filesDir, ModelDownloadManager.MODEL_FILENAME)
         val ready = modelFile.exists() && modelFile.length() > MIN_MODEL_SIZE
         Log.d("Haq/Gemma", "isModelReady=$ready size=${if (modelFile.exists()) modelFile.length() else 0}")
-        return ready
+        ready
     }
 
     private const val MIN_MODEL_SIZE = 1_000_000_000L // 1GB — incomplete downloads are smaller

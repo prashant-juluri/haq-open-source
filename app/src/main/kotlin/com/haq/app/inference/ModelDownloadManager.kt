@@ -40,7 +40,7 @@ class ModelDownloadManager(private val context: Context) {
     /**
      * Checks whether the model exists; downloads it if not.
      * Safe to call multiple times — exits immediately if already [DownloadState.Complete].
-     * All IO runs on [Dispatchers.IO].
+     * All file I/O and network checks run on [Dispatchers.IO].
      */
     suspend fun startDownload() {
         // Already complete — nothing to do
@@ -48,16 +48,27 @@ class ModelDownloadManager(private val context: Context) {
 
         _state.value = DownloadState.Checking
 
-        val modelFile = File(context.filesDir, MODEL_FILENAME)
-        val fileSize = if (modelFile.exists()) modelFile.length() else 0L
-        Log.d("Haq/Download", "checkAndDownload() called, model exists: ${modelFile.exists()}, size: $fileSize")
-        if (modelFile.exists() && fileSize > MIN_MODEL_SIZE) {
+        // File existence and size checks are blocking syscalls — keep them off Main.
+        val (modelFile, alreadyComplete) = withContext(Dispatchers.IO) {
+            val file = File(context.filesDir, MODEL_FILENAME)
+            val fileSize = if (file.exists()) file.length() else 0L
+            Log.d("Haq/Download",
+                "checkAndDownload() called, exists=${file.exists()}, size=$fileSize")
+            if (file.exists() && fileSize > MIN_MODEL_SIZE) {
+                file to true
+            } else {
+                if (file.exists()) {
+                    Log.w("Haq/Download",
+                        "Model file is too small ($fileSize bytes) — incomplete download, re-downloading")
+                    file.delete()
+                }
+                file to false
+            }
+        }
+
+        if (alreadyComplete) {
             _state.value = DownloadState.Complete
             return
-        }
-        if (modelFile.exists() && fileSize <= MIN_MODEL_SIZE) {
-            Log.w("Haq/Download", "Model file is too small ($fileSize bytes) — incomplete download, re-downloading")
-            modelFile.delete()
         }
 
         if (!isOnWifi()) {
@@ -122,10 +133,11 @@ class ModelDownloadManager(private val context: Context) {
         }
     }
 
-    private fun isOnWifi(): Boolean {
+    private suspend fun isOnWifi(): Boolean = withContext(Dispatchers.IO) {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return@withContext false)
+            ?: return@withContext false
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
     }
 
     companion object {
