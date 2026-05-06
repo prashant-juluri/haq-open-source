@@ -169,7 +169,11 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
 
     companion object {
         private const val MODEL_ASSET = "gemma-4-E2B-it.litertlm"
-        private const val MAX_TOKENS  = 512
+        // prefill_1024 writes a 1024-slot chunk starting at the current KV cache
+        // position. System prompt (~70 tokens) is prefilled first, so the user-turn
+        // prefill runs from ~position 70 and needs slots [70…1094]. The KV cache must
+        // be larger than 1094 — 2048 gives comfortable headroom for longer queries too.
+        private const val MAX_TOKENS  = 2048
 
         private const val SYSTEM_PROMPT =
             "You are Haq, an AI that helps marginalised Indian citizens " +
