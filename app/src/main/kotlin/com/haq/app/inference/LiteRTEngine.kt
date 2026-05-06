@@ -55,8 +55,11 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
                 val config = EngineConfig(
                     modelPath,
                     Backend.CPU(),
-                    Backend.CPU(),
-                    Backend.CPU(),
+                    null,          // visionBackend — Haq is text-only; the E2B vision encoder
+                                   // has 3 signatures (vision_70/140/280) but the SDK expects
+                                   // exactly 1, so disabling it avoids INVALID_ARGUMENT crash.
+                    null,          // audioBackend  — STT uses Android SpeechRecognizer; Gemma
+                                   // audio input not used in current implementation.
                     MAX_TOKENS,
                     context.cacheDir.absolutePath,
                 )
@@ -166,7 +169,7 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
 
     companion object {
         private const val MODEL_ASSET = "gemma-4-E2B-it.litertlm"
-        private const val MAX_TOKENS  = 1024
+        private const val MAX_TOKENS  = 512
 
         private const val SYSTEM_PROMPT =
             "You are Haq, an AI that helps marginalised Indian citizens " +
