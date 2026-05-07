@@ -156,6 +156,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     "ml" -> "നിങ്ങളുടെ അവകാശങ്ങൾ. നിങ്ങളുടെ ഭാഷ. ഇടനിലക്കാർ വേണ്ട.\n\nമൈക്ക് അമർത്തി ചോദ്യം ചോദിക്കൂ."
                     "kn" -> "ನಿಮ್ಮ ಹಕ್ಕುಗಳು. ನಿಮ್ಮ ಭಾಷೆ. ದಲ್ಲಾಳಿ ಬೇಡ.\n\nಮೈಕ್ ಒತ್ತಿ ನಿಮ್ಮ ಪ್ರಶ್ನೆ ಕೇಳಿ."
                     "ta" -> "உங்கள் உரிமைகள். உங்கள் மொழி. தரகர் தேவையில்லை.\n\nமைக் அழுத்தி உங்கள் கேள்வியை கேளுங்கள்."
+                    "bn" -> "আপনার অধিকার। আপনার ভাষা। কোনো দালাল নয়।\n\nমাইক চাপুন এবং আপনার প্রশ্ন করুন।"
                     "en" -> "Your rights. Your language. No middleman.\n\nPress the mic and ask your question."
                     else -> "आपके अधिकार। आपकी भाषा। कोई बिचौलिया नहीं।\n\nमाइक दबाएं और अपना सवाल पूछें।"
                 }
@@ -256,6 +257,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     "ml" -> "മോഡൽ ലോഡ് ആകുന്നു. ദയവായി കാത്തിരിക്കൂ."
                     "kn" -> "ಮಾದರಿ ಲೋಡ್ ಆಗುತ್ತಿದೆ. ದಯವಿಟ್ಟು ನಿರೀಕ್ಷಿಸಿ."
                     "ta" -> "மாடல் ஏற்றப்படுகிறது. காத்திருங்கள்."
+                    "bn" -> "মডেল লোড হচ্ছে। অপেক্ষা করুন।"
                     else -> "Model is loading. Please wait."
                 }
                 _appState.value = AppState.READY
@@ -276,6 +278,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 "ml" -> "Malayalam"
                 "kn" -> "Kannada"
                 "ta" -> "Tamil"
+                "bn" -> "Bengali"
                 "en" -> "English"
                 else -> "Hindi"
             }
