@@ -159,6 +159,9 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     "bn" -> "আপনার অধিকার। আপনার ভাষা। কোনো দালাল নয়।\n\nমাইক চাপুন এবং আপনার প্রশ্ন করুন।"
                     "gu" -> "તમારા અધિકારો. તમારી ભાષા. કોઈ દલાલ નહીં.\n\nમાઇક દબાવો અને તમારો પ્રશ્ન પૂછો."
                     "mr" -> "तुमचे हक्क. तुमची भाषा. कोणता दलाल नाही.\n\nमायक दाबा आणि तुमचा प्रश्न विचारा."
+                    "or" -> "ଆପଣଙ୍କ ଅଧିକାର। ଆପଣଙ୍କ ଭାଷା। କୌଣସି ଦଲ୍ଲାଲ ନାହିଁ।\n\nମାଇକ୍ ଦବାନ୍ତୁ ଏବଂ ଆପଣଙ୍କ ପ୍ରଶ୍ନ ପଚାରନ୍ତୁ।"
+                    "as" -> "আপোনাৰ অধিকাৰ। আপোনাৰ ভাষা। কোনো দালাল নাই।\n\nমাইক টিপক আৰু আপোনাৰ প্ৰশ্ন সুধক।"
+                    "ne" -> "तपाईंका अधिकारहरू। तपाईंको भाषा। कुनै दलाल छैन।\n\nमाइक थिच्नुस् र तपाईंको प्रश्न सोध्नुस्।"
                     "en" -> "Your rights. Your language. No middleman.\n\nPress the mic and ask your question."
                     else -> "आपके अधिकार। आपकी भाषा। कोई बिचौलिया नहीं।\n\nमाइक दबाएं और अपना सवाल पूछें।"
                 }
@@ -262,6 +265,9 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     "bn" -> "মডেল লোড হচ্ছে। অপেক্ষা করুন।"
                     "gu" -> "મોડેલ લોડ થઈ રહ્યું છે. રાહ જુઓ."
                     "mr" -> "मॉडेल लोड होत आहे. कृपया थांबा."
+                    "or" -> "ମଡେଲ ଲୋଡ ହେଉଛି। ଦୟାକରି ଅପେକ୍ଷା କରନ୍ତୁ।"
+                    "as" -> "মডেল লোড হৈ আছে। অনুগ্ৰহ কৰি অপেক্ষা কৰক।"
+                    "ne" -> "मोडेल लोड हुँदैछ। कृपया प्रतीक्षा गर्नुस्।"
                     else -> "Model is loading. Please wait."
                 }
                 _appState.value = AppState.READY
@@ -285,6 +291,9 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 "bn" -> "Bengali"
                 "gu" -> "Gujarati"
                 "mr" -> "Marathi"
+                "or" -> "Odia"
+                "as" -> "Assamese"
+                "ne" -> "Nepali"
                 "en" -> "English"
                 else -> "Hindi"
             }

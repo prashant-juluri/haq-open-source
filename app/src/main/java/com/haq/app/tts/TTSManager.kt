@@ -55,6 +55,9 @@ object TTSManager {
         "bn" to Locale("bn", "IN"),
         "gu" to Locale("gu", "IN"),
         "mr" to Locale("mr", "IN"),
+        "or" to Locale("or", "IN"),
+        "as" to Locale("as", "IN"),
+        "ne" to Locale("ne", "IN"),
         "en" to Locale("en", "IN"),
     )
 
@@ -67,6 +70,9 @@ object TTSManager {
         "bn" to "নমস্কার",
         "gu" to "નમસ્તે",
         "mr" to "नमस्कार",
+        "or" to "ନମସ୍କାର",
+        "as" to "নমস্কাৰ",
+        "ne" to "नमस्ते",
         "en" to "hello",
     )
 
@@ -80,6 +86,9 @@ object TTSManager {
         "bn" -> Locale("bn", "IN")
         "gu" -> Locale("gu", "IN")
         "mr" -> Locale("mr", "IN")
+        "or" -> Locale("or", "IN")
+        "as" -> Locale("as", "IN")
+        "ne" -> Locale("ne", "IN")
         "en" -> Locale("en", "IN")
         else -> Locale("hi", "IN")
     }
