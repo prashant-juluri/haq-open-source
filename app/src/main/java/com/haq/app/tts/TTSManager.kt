@@ -51,6 +51,7 @@ object TTSManager {
         "te" to Locale("te", "IN"),
         "ml" to Locale("ml", "IN"),
         "kn" to Locale("kn", "IN"),
+        "ta" to Locale("ta", "IN"),
         "en" to Locale("en", "IN"),
     )
 
@@ -59,6 +60,7 @@ object TTSManager {
         "te" to "నమస్తే",
         "ml" to "നമസ്കാരം",
         "kn" to "ನಮಸ್ಕಾರ",
+        "ta" to "வணக்கம்",
         "en" to "hello",
     )
 
@@ -68,6 +70,7 @@ object TTSManager {
         "te" -> Locale("te", "IN")
         "ml" -> Locale("ml", "IN")
         "kn" -> Locale("kn", "IN")
+        "ta" -> Locale("ta", "IN")
         "en" -> Locale("en", "IN")
         else -> Locale("hi", "IN")
     }
