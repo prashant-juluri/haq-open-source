@@ -968,10 +968,13 @@ private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Un
     )
     val containerColor by animateColorAsState(
         targetValue = when {
-            isSpeaking                  -> HaqMuted   // grayed while TTS plays
+            // THINKING always shows blue so the user knows they can pause — even
+            // when TTS is simultaneously reading out streamed sentences.
+            appState == AppState.THINKING  -> Color(0xFF42A5F5)
+            // Grey only in READY+speaking (TTS playing a previous response) and LOADING.
+            isSpeaking                     -> HaqMuted
             appState == AppState.LOADING   -> HaqMuted
             appState == AppState.LISTENING -> Color(0xFFE53935)
-            appState == AppState.THINKING  -> Color(0xFF42A5F5)
             else                           -> HaqGreen
         },
         animationSpec = tween(300),
