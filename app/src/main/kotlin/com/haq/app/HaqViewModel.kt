@@ -317,8 +317,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     // Cap the previous response at 800 chars to stay within the KV budget
                     // (2048 tokens total; system ~70, profile ~40, query ~50, response ~400).
                     if (p.lastQuery.isNotBlank() && p.lastResponse.isNotBlank()) {
-                        val prevResponse = if (p.lastResponse.length > 800)
-                            p.lastResponse.take(800) + "…"
+                        // Take the TAIL of the previous response — the end contains the
+                        // action steps and helpline which are most useful for follow-up.
+                        // 3000 chars ≈ 1000 tokens (Telugu ~3 chars/token), well within
+                        // the ~1498-token headroom in the 2048-token KV cache.
+                        val prevResponse = if (p.lastResponse.length > 3000)
+                            "…" + p.lastResponse.takeLast(3000)
                         else
                             p.lastResponse
                         append("Previous question: ${p.lastQuery} ")
