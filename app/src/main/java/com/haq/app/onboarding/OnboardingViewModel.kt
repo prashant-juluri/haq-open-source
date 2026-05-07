@@ -589,7 +589,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             is OnboardingStep.AskName ->
                 "TASK: Extract the person's name from their reply.\n" +
                 "Reply: \"$transcript\"\n" +
-                "Output the name only. One or two words. Nothing else."
+                "Output the name only. Nothing else."
 
             is OnboardingStep.AskState ->
                 "TASK: Extract the Indian state name from their reply.\n" +
