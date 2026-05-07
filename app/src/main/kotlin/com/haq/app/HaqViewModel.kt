@@ -180,13 +180,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         _needsOnboarding.value = true
     }
 
-    /** Cancels any in-flight Gemma query and clears UI state. Safe to call at any time. */
+    /** Cancels any in-flight Gemma query. Safe to call at any time. */
     fun cancelCurrentQuery() {
         currentQueryJob?.cancel()
         currentQueryJob = null
         isGenerating = false
         _appState.value = AppState.READY
-        _responseText.value = ""
+        // _responseText is intentionally NOT cleared here so a paused partial response
+        // stays visible. submitQuery() clears it at the start of each new query, and
+        // reloadActiveProfile() repopulates it on profile switch.
         Log.d("Haq/VM", "Current query cancelled")
     }
 
