@@ -313,12 +313,26 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     append("State: ${p.state}, ")
                     append("Category: ${p.casteCategory}, ")
                     append("Occupation: ${p.occupation}. ")
+                    // Inject the last exchange as context so Gemma can refer back to it.
+                    // Cap the previous response at 800 chars to stay within the KV budget
+                    // (2048 tokens total; system ~70, profile ~40, query ~50, response ~400).
+                    if (p.lastQuery.isNotBlank() && p.lastResponse.isNotBlank()) {
+                        val prevResponse = if (p.lastResponse.length > 800)
+                            p.lastResponse.take(800) + "…"
+                        else
+                            p.lastResponse
+                        append("Previous question: ${p.lastQuery} ")
+                        append("Previous answer: $prevResponse ")
+                    }
                 }
                 append("Question: $prompt")
             }
 
+            val hasHistory = activeProfile?.lastQuery?.isNotBlank() == true &&
+                activeProfile?.lastResponse?.isNotBlank() == true
             Log.d("Haq/Gemma", "submitQuery() lang=$languageName " +
-                "profile=${activeProfile?.name} queryLength=${contextualQuery.length}")
+                "profile=${activeProfile?.name} hasHistory=$hasHistory " +
+                "queryLength=${contextualQuery.length}")
 
             val fullResponse = StringBuilder()
             val sentenceBuffer = StringBuilder()
