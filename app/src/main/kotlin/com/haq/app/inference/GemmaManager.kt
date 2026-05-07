@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /**
@@ -81,6 +82,39 @@ object GemmaManager {
                     throw e
                 }
             }
+    }
+
+    /**
+     * Runs [extractionPrompt] through Gemma and returns the first non-empty line
+     * of the response — intended for short structured extractions (name, state,
+     * caste, occupation) from natural-language voice transcripts.
+     *
+     * Caps at 10 seconds and falls back to [fallback] on timeout, engine error,
+     * or blank response so onboarding never hangs waiting for extraction.
+     */
+    suspend fun extractField(extractionPrompt: String, fallback: String): String {
+        if (!::engine.isInitialized) return fallback
+        return try {
+            val result = withTimeoutOrNull(10_000L) {
+                val response = StringBuilder()
+                generateResponse(extractionPrompt).collect { token ->
+                    response.append(token)
+                    // Stop collecting as soon as we have a complete first line —
+                    // extraction prompts should produce a single short answer.
+                    if (response.contains('\n') && response.isNotBlank()) return@collect
+                }
+                response.toString()
+                    .lines()
+                    .firstOrNull { it.isNotBlank() }
+                    ?.trim()
+            }
+            val extracted = result?.takeIf { it.isNotBlank() } ?: fallback
+            Log.d("Haq/Gemma", "extractField: '$fallback' → '$extracted'")
+            extracted
+        } catch (e: Exception) {
+            Log.w("Haq/Gemma", "extractField failed (${e.message}) — using raw transcript")
+            fallback
+        }
     }
 
     fun shutdown() {
