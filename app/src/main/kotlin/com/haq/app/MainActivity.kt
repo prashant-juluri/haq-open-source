@@ -89,6 +89,7 @@ import com.haq.app.onboarding.OnboardingListenState
 import com.haq.app.onboarding.OnboardingStep
 import com.haq.app.ui.theme.HaqGreen
 import com.haq.app.ui.theme.HaqMuted
+import com.haq.app.ui.theme.avatarColor
 import com.haq.app.ui.theme.HaqTheme
 enum class AppState(val label: String) {
     LOADING("Loading Haq…"),
@@ -828,7 +829,7 @@ private fun ProfileAvatar(name: String, onClick: () -> Unit) {
         modifier = Modifier
             .size(40.dp)
             .clip(CircleShape)
-            .background(HaqGreen)
+            .background(avatarColor(name))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -884,7 +885,7 @@ private fun ProfileSwitcherSheet(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(CircleShape)
-                        .background(HaqGreen),
+                        .background(avatarColor(profile.name)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
