@@ -305,7 +305,10 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 else -> "Hindi"
             }
 
-            val contextualQuery = buildString {
+            // Build two queries: one with last-exchange history, one without.
+            // The fallback is used if the first attempt fails before emitting
+            // any tokens — the signature of a KV cache overflow during prefill.
+            val baseQuery = buildString {
                 append("IMPORTANT: Respond ONLY in $languageName. ")
                 append("Do not use any other language. ")
                 activeProfile?.takeIf { it.isOnboarded }?.let { p ->
@@ -317,76 +320,88 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 append("Question: $prompt")
             }
 
+            val hasHistory = activeProfile?.lastQuery?.isNotBlank() == true &&
+                activeProfile?.lastResponse?.isNotBlank() == true
+
+            val contextualQuery = if (hasHistory) {
+                val p = activeProfile!!
+                val fixedText = buildString {
+                    append("IMPORTANT: Respond ONLY in $languageName. ")
+                    append("Do not use any other language. ")
+                    append("User: ${p.name}, State: ${p.state}, ")
+                    append("Category: ${p.casteCategory}, Occupation: ${p.occupation}. ")
+                    append("Previous question: ${p.lastQuery} Previous answer:  ")
+                    append("Question: $prompt")
+                }
+                val charBudget = historyCharBudget(fixedText)
+                val prevResponse = if (p.lastResponse.length > charBudget)
+                    "…" + p.lastResponse.takeLast(charBudget)
+                else
+                    p.lastResponse
+                Log.d("Haq/Gemma", "History: budget=${charBudget}chars " +
+                    "actual=${prevResponse.length}chars")
+                buildString {
+                    append("IMPORTANT: Respond ONLY in $languageName. ")
+                    append("Do not use any other language. ")
+                    append("User: ${p.name}, State: ${p.state}, ")
+                    append("Category: ${p.casteCategory}, Occupation: ${p.occupation}. ")
+                    append("Previous question: ${p.lastQuery} ")
+                    append("Previous answer: $prevResponse ")
+                    append("Question: $prompt")
+                }
+            } else {
+                baseQuery
+            }
+
             Log.d("Haq/Gemma", "submitQuery() lang=$languageName " +
-                "profile=${activeProfile?.name} queryLength=${contextualQuery.length}")
+                "profile=${activeProfile?.name} hasHistory=$hasHistory " +
+                "queryLength=${contextualQuery.length}")
 
             val fullResponse = StringBuilder()
             val sentenceBuffer = StringBuilder()
             val langCode = _activeLanguage.value
-            try {
-                GemmaManager.generateResponse(contextualQuery).collect { token ->
-                    fullResponse.append(token)
-                    sentenceBuffer.append(token)
-                    _responseText.value = fullResponse.toString()
 
-                    val buf = sentenceBuffer.toString()
-                    val boundaryIdx = buf.indexOfFirst {
-                        it == '.' || it == '?' || it == '!' || it == '।'
-                    }
-                    if (boundaryIdx >= 0) {
-                        val sentence = buf
-                            .substring(0, boundaryIdx + 1)
-                            .replace("**", "")
-                            .replace("*", "")
-                            .replace("#", "")
-                            .trim()
-                        if (sentence.length >= 15) {
-                            TTSManager.speak(
-                                text = sentence,
-                                languageCode = langCode,
-                                queueMode = TextToSpeech.QUEUE_ADD,
-                                onOutputError = {
-                                    Log.w("Haq/VM", "Sentence speak failed for $langCode — skipping sentence")
-                                },
-                            )
-                        }
-                        sentenceBuffer.clear()
-                        sentenceBuffer.append(buf.substring(boundaryIdx + 1))
-                    }
-                }
-                // Speak any text remaining after the stream ends (no trailing punctuation)
-                val remaining = sentenceBuffer.toString()
-                    .replace("**", "")
-                    .replace("*", "")
-                    .replace("#", "")
-                    .trim()
-                if (remaining.length >= 5) {
-                    TTSManager.speak(
-                        text = remaining,
-                        languageCode = langCode,
-                        queueMode = TextToSpeech.QUEUE_ADD,
-                        onOutputError = {
-                            Log.w("Haq/VM", "Remaining speak failed for $langCode — skipping")
-                        },
-                    )
-                }
+            try {
+                streamResponse(contextualQuery, langCode, fullResponse, sentenceBuffer)
             } catch (e: CancellationException) {
                 Log.d("Haq/VM", "Query cancelled after ${fullResponse.length} chars")
                 // Do not rethrow — save whatever was collected before cancellation
             } catch (e: Exception) {
-                Log.e("Haq/Gemma", "submitQuery error", e)
+                // If no tokens were received the failure happened during prefill —
+                // most likely a KV cache overflow from the history injection.
+                // Retry once with the history-free baseQuery before giving up.
+                if (hasHistory && fullResponse.isEmpty()) {
+                    Log.w("Haq/Gemma", "Query with history failed (${e.message}), " +
+                        "retrying without history")
+                    sentenceBuffer.clear()
+                    try {
+                        streamResponse(baseQuery, langCode, fullResponse, sentenceBuffer)
+                    } catch (e2: CancellationException) {
+                        Log.d("Haq/VM", "Retry cancelled after ${fullResponse.length} chars")
+                    } catch (e2: Exception) {
+                        Log.e("Haq/Gemma", "Retry also failed", e2)
+                        _responseText.value = retryErrorMessage(langCode)
+                    }
+                } else {
+                    Log.e("Haq/Gemma", "submitQuery error", e)
+                    if (fullResponse.isEmpty()) _responseText.value = retryErrorMessage(langCode)
+                }
             } finally {
                 // Use NonCancellable so the save always completes even if cancelled
                 if (fullResponse.isNotEmpty()) {
                     activeProfile?.let { p ->
+                        val responseStr = fullResponse.toString()
                         withContext(NonCancellable) {
                             ProfileManager.saveLastConversation(
                                 profileId = p.id,
                                 query = prompt,
-                                response = fullResponse.toString(),
+                                response = responseStr,
                             )
                             Log.d("Haq/VM", "Saved ${fullResponse.length} chars for profile ${p.id}")
                         }
+                        // Keep the in-memory profile in sync so the NEXT query
+                        // immediately sees hasHistory=true without a DB round-trip.
+                        activeProfile = p.copy(lastQuery = prompt, lastResponse = responseStr)
                     }
                 }
                 isGenerating = false
@@ -394,6 +409,124 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 _appState.value = AppState.READY
             }
         }
+    }
+
+    /**
+     * Streams tokens from Gemma into [fullResponse] and [sentenceBuffer],
+     * updating [_responseText] and firing TTS sentence-by-sentence.
+     * Throws on engine error; the caller handles CancellationException and
+     * Exception separately so it can decide whether to retry.
+     */
+    private suspend fun streamResponse(
+        query: String,
+        langCode: String,
+        fullResponse: StringBuilder,
+        sentenceBuffer: StringBuilder,
+    ) {
+        GemmaManager.generateResponse(query).collect { token ->
+            fullResponse.append(token)
+            sentenceBuffer.append(token)
+            _responseText.value = fullResponse.toString()
+
+            val buf = sentenceBuffer.toString()
+            val boundaryIdx = buf.indexOfFirst {
+                it == '.' || it == '?' || it == '!' || it == '।'
+            }
+            if (boundaryIdx >= 0) {
+                val sentence = buf
+                    .substring(0, boundaryIdx + 1)
+                    .replace("**", "")
+                    .replace("*", "")
+                    .replace("#", "")
+                    .trim()
+                if (sentence.length >= 15) {
+                    TTSManager.speak(
+                        text = sentence,
+                        languageCode = langCode,
+                        queueMode = TextToSpeech.QUEUE_ADD,
+                        onOutputError = {
+                            Log.w("Haq/VM", "Sentence speak failed for $langCode — skipping")
+                        },
+                    )
+                }
+                sentenceBuffer.clear()
+                sentenceBuffer.append(buf.substring(boundaryIdx + 1))
+            }
+        }
+        // Speak any text remaining after the stream ends (no trailing punctuation)
+        val remaining = sentenceBuffer.toString()
+            .replace("**", "")
+            .replace("*", "")
+            .replace("#", "")
+            .trim()
+        if (remaining.length >= 5) {
+            TTSManager.speak(
+                text = remaining,
+                languageCode = langCode,
+                queueMode = TextToSpeech.QUEUE_ADD,
+                onOutputError = {
+                    Log.w("Haq/VM", "Remaining speak failed for $langCode — skipping")
+                },
+            )
+        }
+    }
+
+    /** Language-aware message shown when both the primary and retry queries fail. */
+    private fun retryErrorMessage(langCode: String): String = when (langCode) {
+        "hi" -> "कुछ गड़बड़ हो गई। कृपया दोबारा कोशिश करें।"
+        "te" -> "ఏదో తప్పు జరిగింది. దయచేసి మళ్ళీ ప్రయత్నించండి."
+        "ml" -> "എന്തോ പിശക് സംഭവിച്ചു. വീണ്ടും ശ്രമിക്കൂ."
+        "kn" -> "ಏನೋ ತಪ್ಪಾಯಿತು. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ."
+        "ta" -> "ஏதோ தவறு நடந்தது. மீண்டும் முயற்சிக்கவும்."
+        "bn" -> "কিছু একটা ভুল হয়েছে। আবার চেষ্টা করুন।"
+        "gu" -> "કંઈક ખોટું થયું. કૃપા કરી ફરી પ્રયાસ કરો."
+        "mr" -> "काहीतरी चूक झाली. कृपया पुन्हा प्रयत्न करा."
+        "or" -> "କିଛି ଭୁଲ ହୋଇଗଲା। ଦୟାକରି ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ।"
+        "as" -> "কিবা ভুল হৈছে। অনুগ্ৰহ কৰি পুনৰ চেষ্টা কৰক।"
+        "ne" -> "केही गलत भयो। कृपया फेरि प्रयास गर्नुस्।"
+        else -> "Something went wrong. Please try again."
+    }
+
+    /**
+     * Estimates the token count of [text] using a conservative, script-aware
+     * heuristic. Errs on the side of over-counting (fewer chars allowed = safer).
+     *
+     *   ASCII / Latin      ≈ 4 chars/token  → 0.25 tokens/char
+     *   Latin extended     ≈ 2.5 chars/token → 0.40 tokens/char
+     *   Indic scripts      ≈ 1.5 chars/token → 0.67 tokens/char  ← worst case used
+     *   Everything else    ≈ 1.5 chars/token → 0.67 tokens/char
+     *
+     * Indic Unicode blocks covered: Devanagari (hi/mr/ne), Bengali (bn/as),
+     * Gujarati (gu), Oriya (or), Tamil (ta), Telugu (te), Kannada (kn),
+     * Malayalam (ml) — all fall in U+0900–U+0D7F.
+     */
+    private fun estimateTokens(text: String): Int {
+        var count = 0.0
+        for (ch in text) {
+            count += when (ch.code) {
+                in 0x0000..0x007F -> 0.25   // ASCII
+                in 0x0080..0x024F -> 0.40   // Latin extended
+                in 0x0900..0x0D7F -> 0.67   // Indic scripts (~1.5 chars/token)
+                else              -> 0.67   // conservative fallback
+            }
+        }
+        return kotlin.math.ceil(count).toInt()
+    }
+
+    /**
+     * Returns the number of characters of previous-response history that can
+     * safely be injected into the prompt without overflowing the KV cache.
+     *
+     * [fixedText] is everything in the user turn EXCEPT the history itself
+     * (language instruction + profile metadata + previous question label +
+     * new question). Tokens are estimated conservatively so the actual
+     * history chars are always an underestimate of what would fit.
+     */
+    private fun historyCharBudget(fixedText: String): Int {
+        val fixedTokens = SYSTEM_PROMPT_TOKENS + estimateTokens(fixedText)
+        val remaining = KV_CACHE_TOKENS - RESPONSE_RESERVE_TOKENS - fixedTokens
+        // Convert tokens → chars at the same conservative 1.5 chars/token ratio.
+        return maxOf(0, (remaining * 1.5).toInt())
     }
 
     private fun startDownload() {
@@ -404,5 +537,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
         TTSManager.shutdown()
         GemmaManager.shutdown()
+    }
+
+    companion object {
+        // Must match LiteRTEngine.MAX_TOKENS (2048).
+        private const val KV_CACHE_TOKENS = 2048
+        // Tokens reserved for Gemma's output — tighten if responses feel truncated,
+        // loosen if KV overflow errors appear.
+        private const val RESPONSE_RESERVE_TOKENS = 600
+        // System prompt token count measured from prefill logs.
+        private const val SYSTEM_PROMPT_TOKENS = 70
     }
 }
