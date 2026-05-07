@@ -61,7 +61,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     // Languages confirmed available by TTS engine on this device.
     // Computed when voice readiness polling completes.
-    private val _supportedLanguages = MutableStateFlow(listOf("hi", "te", "ml", "kn", "en"))
+    private val _supportedLanguages = MutableStateFlow(listOf("hi", "te", "ml", "kn", "ta", "en"))
     val supportedLanguages: StateFlow<List<String>> = _supportedLanguages.asStateFlow()
 
     // Status shown on PreparingVoices screen. Updated as model/voice download progresses.
@@ -274,6 +274,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "te" -> "నమస్కారం. నేను హక్ — మీ హక్కుల నావిగేటర్. నేను మీకు ప్రభుత్వ సంక్షేమ పథకాల గురించి సహాయం చేస్తాను. మీ పేరు ఏమిటి?"
         "ml" -> "നമസ്കാരം. ഞാൻ ഹഖ് — നിങ്ങളുടെ അവകാശ നാവിഗേറ്റർ. ഞാൻ നിങ്ങൾക്ക് സർക്കാർ ക്ഷേമ പദ്ധതികളെ കുറിച്ച് സഹായിക്കും. നിങ്ങളുടെ പേര് എന്താണ്?"
         "kn" -> "ನಮಸ್ಕಾರ. ನಾನು ಹಕ್ — ನಿಮ್ಮ ಹಕ್ಕುಗಳ ನ್ಯಾವಿಗೇಟರ್. ನಾನು ನಿಮಗೆ ಸರ್ಕಾರಿ ಕಲ್ಯಾಣ ಯೋಜನೆಗಳ ಬಗ್ಗೆ ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ನಿಮ್ಮ ಹೆಸರು ಏನು?"
+        "ta" -> "வணக்கம். நான் ஹக் — உங்கள் உரிமைகள் வழிகாட்டி. நான் உங்களுக்கு அரசு நல திட்டங்களில் உதவுவேன். உங்கள் பெயர் என்ன?"
         "en" -> "Hello. I am Haq — your rights navigator. I help you claim government welfare schemes you are entitled to. What is your name?"
         else -> "नमस्ते। मैं हक़ हूँ — आपका अधिकार नेविगेटर। मैं आपको सरकारी कल्याण योजनाओं का लाभ दिलाने में मदद करूँगा। आपका नाम क्या है?"
     }
@@ -282,6 +283,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "te" -> "$collectedName, మీరు ఏ రాష్ట్రంలో నివసిస్తున్నారు?"
         "ml" -> "$collectedName, നിങ്ങൾ ഏത് സംസ്ഥാനത്താണ് താമസിക്കുന്നത്?"
         "kn" -> "$collectedName, ನೀವು ಯಾವ ರಾಜ್ಯದಲ್ಲಿ ವಾಸಿಸುತ್ತೀರಿ?"
+        "ta" -> "$collectedName, நீங்கள் எந்த மாநிலத்தில் வாழ்கிறீர்கள்?"
         "en" -> "$collectedName, which state do you live in?"
         else -> "$collectedName, आप किस राज्य में रहते हैं?"
     }
@@ -290,6 +292,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "te" -> "మీరు SC, ST, OBC, లేదా General వర్గానికి చెందిన వారా?"
         "ml" -> "നിങ്ങൾ SC, ST, OBC, അല്ലെങ്കിൽ General വിഭാഗത്തിൽ പെടുന്നുവോ?"
         "kn" -> "ನೀವು SC, ST, OBC ಅಥವಾ General ವರ್ಗಕ್ಕೆ ಸೇರಿದ್ದೀರಾ?"
+        "ta" -> "நீங்கள் SC, ST, OBC அல்லது General பிரிவைச் சேர்ந்தவரா?"
         "en" -> "Do you belong to SC, ST, OBC, or General category?"
         else -> "आप SC, ST, OBC, या General श्रेणी में से किसमें आते हैं?"
     }
@@ -298,6 +301,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "te" -> "మీరు ఏమి పని చేస్తారు?"
         "ml" -> "നിങ്ങൾ എന്ത് ജോലി ചെയ്യുന്നു?"
         "kn" -> "ನೀವು ಏನು ಕೆಲಸ ಮಾಡುತ್ತೀರಿ?"
+        "ta" -> "நீங்கள் என்ன வேலை செய்கிறீர்கள்?"
         "en" -> "What work do you do?"
         else -> "आप क्या काम करते हैं?"
     }
@@ -306,6 +310,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "te" -> "అన్నీ సెట్ అయ్యాయి. మైక్ నొక్కి ఏదైనా అడగండి."
         "ml" -> "എല്ലാം സജ്ജമായി. മൈക്ക് ടാപ്പ് ചെയ്ത് ചോദിക്കൂ."
         "kn" -> "ಎಲ್ಲಾ ಸಿದ್ಧವಾಗಿದೆ. ಮೈಕ್ ಒತ್ತಿ ಏನಾದರೂ ಕೇಳಿ."
+        "ta" -> "அனைத்தும் தயாராகிவிட்டது. மைக்கை அழுத்தி கேளுங்கள்."
         "en" -> "All set. Tap the mic and ask anything."
         else -> "सब तैयार है। माइक दबाएं और कुछ भी पूछें।"
     }
@@ -387,6 +392,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                     "hi" -> "हिंदी आवाज़ तैयार हो रही है..."
                     "ml" -> "മലയാളം ശബ്ദം തയ്യാറാകുന്നു..."
                     "kn" -> "ಕನ್ನಡ ಧ್ವನಿ ಸಿದ್ಧವಾಗುತ್ತಿದೆ..."
+                    "ta" -> "தமிழ் குரல் தயாராகிறது..."
                     else -> "Preparing English voice..."
                 }
                 // Only flash the PreparingVoices screen for Introduction. For question
@@ -438,6 +444,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "te" -> "నేను వినలేదు. దయచేసి మళ్ళీ చెప్పండి."
         "ml" -> "എനിക്ക് കേൾക്കാൻ കഴിഞ്ഞില്ല. ദയവായി വീണ്ടും പറയൂ."
         "kn" -> "ನನಗೆ ಕೇಳಿಸಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಹೇಳಿ."
+        "ta" -> "எனக்கு கேட்கவில்லை. மீண்டும் சொல்லுங்கள்."
         "en" -> "I didn't catch that. Please say it again."
         else -> "मुझे सुनाई नहीं दिया। कृपया फिर से बोलें।"
     }
@@ -446,6 +453,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "te" -> "దయచేసి మైక్ బటన్ నొక్కి మాట్లాడండి."
         "ml" -> "ദയവായി മൈക്ക് ബട്ടൺ അമർത്തി സംസാരിക്കൂ."
         "kn" -> "ದಯವಿಟ್ಟು ಮೈಕ್ ಬಟನ್ ಒತ್ತಿ ಮಾತನಾಡಿ."
+        "ta" -> "மைக் பொத்தானை அழுத்தி பேசுங்கள்."
         "en" -> "Please tap the mic button and speak."
         else -> "कृपया माइक बटन दबाकर बोलें।"
     }
@@ -637,7 +645,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         _listenState.value  = OnboardingListenState.IDLE
         _isListening.value  = false
         _micActivationEvent.value = 0
-        _supportedLanguages.value = listOf("hi", "te", "ml", "kn", "en")
+        _supportedLanguages.value = listOf("hi", "te", "ml", "kn", "ta", "en")
         _createdProfileId.value = -1
         _step.value = OnboardingStep.LanguageSelect
         // Readiness polling starts only after the user picks a language (selectLanguage).
