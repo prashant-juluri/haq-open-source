@@ -115,7 +115,8 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             TTSManager.reinitialiseAndWait()
             TTSManager.clearCachedVoice(selectedLanguage)
 
-            if (_step.value is OnboardingStep.PreparingVoices) {
+            if (_step.value is OnboardingStep.PreparingVoices ||
+                _step.value is OnboardingStep.InstallingVoicePacks) {
                 val modelReady = GemmaManager.isModelReady(getApplication())
                 if (!modelReady) {
                     Log.d("Haq/Onboard", "TTS data installed but model not ready — poll loop will pick it up")
@@ -126,7 +127,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                     voicePollingJob = null
                     enterIntroduction()
                 }
-                // If testSpeak still fails the outer poll continues retrying every 5 s.
+                // If testSpeak still fails the outer poll continues retrying every 30 s.
             } else {
                 // Beyond PreparingVoices (escape hatch already fired, or main app).
                 // Voice is now reinitialised — subsequent speak() calls will find the
@@ -135,52 +136,123 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 Log.d("Haq/Onboard",
                     "onTtsDataInstalled: step=${_step.value} — silent reinit done, " +
                     "$selectedLanguage voiceReady=$voiceReady")
+
+                // If the escape hatch fired before voice data arrived, onboarding
+                // questions were asked silently. Now that voice is ready, re-speak
+                // the current question so the user knows what to answer.
+                // Only re-trigger when the mic is IDLE — if the user is already
+                // speaking their answer, the next question will be audible anyway.
+                if (_listenState.value == OnboardingListenState.IDLE) {
+                    val questionText: String? = when (_step.value) {
+                        is OnboardingStep.Introduction,
+                        is OnboardingStep.AskName       -> getIntroductionText(selectedLanguage)
+                        is OnboardingStep.AskState      -> getAskStateText(selectedLanguage)
+                        is OnboardingStep.AskCaste      -> getAskCasteText(selectedLanguage)
+                        is OnboardingStep.AskOccupation -> getAskOccupationText(selectedLanguage)
+                        else                            -> null
+                    }
+                    if (questionText != null) {
+                        Log.d("Haq/Onboard",
+                            "onTtsDataInstalled: re-speaking question for step=${_step.value}")
+                        speakOnboarding(text = questionText, languageCode = selectedLanguage)
+                        _micActivationEvent.value++
+                    }
+                }
             }
         }
     }
 
     /**
-     * Triggers a silent download for [languageCode], then polls every 5 s until both
-     * the model file and the selected language's voice data are ready. Advances to
-     * Introduction once both conditions are satisfied, or after 60 s of voice failures
-     * (escape hatch so the user is never blocked indefinitely).
+     * Triggers a silent download for [languageCode], then polls until both the model
+     * file and the selected language's voice data are confirmed ready. Only then
+     * advances to Introduction — never with a silent voice.
+     *
+     * ### Download strategy
+     * When the voice is **missing from the engine list** (`checkLanguageSupport` false):
+     * `ensureVoiceDownloading()` calls `setLanguage()` every 5 s to keep Google TTS
+     * aware it is needed.
+     *
+     * When the voice **appears in the list but synthesis fails** (`testSpeak` returns
+     * false / -4): the failure itself signals to Google TTS that the data is incomplete
+     * and a background download begins. Calling `speak()` again every 5 s can restart
+     * or interrupt that download. So after the first `testSpeak` failure we back off
+     * to a 30 s check interval and rely on `ACTION_TTS_DATA_INSTALLED` (received by
+     * [onTtsDataInstalled]) as the primary completion signal.
      */
     private fun startSingleLanguageReadinessPolling(languageCode: String) {
         voicePollingJob?.cancel()
         voicePollingJob = viewModelScope.launch {
+            // Initial trigger — idempotent if voice is already present.
             TTSManager.ensureVoiceDownloading(languageCode)
 
-            var voiceFailCount = 0
-            val voiceFailThreshold = 12 // 12 × 5 s = 60 s after model is ready
+            // Counter of 5 s cycles to wait before the next testSpeak() call.
+            // 0 = test immediately, N > 0 = wait N more cycles.
+            var testSpeakCountdown = 0
+            // Consecutive testSpeak failures. Resets when voice goes missing (re-appears after
+            // re-download) or model becomes unready.
+            var testSpeakFailures = 0
+            // Show InstallingVoicePacks after this many 30 s testSpeak failures (~3 min).
+            val escapeAfterFailures = 6
 
             while (true) {
-                val modelReady = GemmaManager.isModelReady(getApplication())
+                val modelReady   = GemmaManager.isModelReady(getApplication())
                 val voiceMissing = !TTSManager.checkLanguageSupport(languageCode)
                 updatePreparingStatus(voiceMissing, !modelReady)
                 Log.d("Haq/Onboard",
                     "Single-lang readiness poll: lang=$languageCode " +
                     "modelReady=$modelReady voiceMissing=$voiceMissing " +
-                    "voiceFails=$voiceFailCount")
-
-                // Re-trigger download each cycle so Google TTS keeps downloading
-                // even when the voice entry exists in the list but has no data.
-                TTSManager.ensureVoiceDownloading(languageCode)
+                    "testSpeakIn=${testSpeakCountdown * 5}s")
 
                 if (modelReady) {
-                    if (verifySingleVoiceSpeakable(languageCode)) {
-                        enterIntroduction()
-                        break
+                    if (voiceMissing) {
+                        // Voice entry absent — re-signal download intent via setLanguage.
+                        TTSManager.ensureVoiceDownloading(languageCode)
+                        testSpeakCountdown = 0  // test immediately once it appears
+                        testSpeakFailures  = 0
+                    } else {
+                        // Voice entry present — check synthesability via speak(), but at
+                        // most once per 30 s. Repeated speak() calls while Google TTS is
+                        // downloading the same voice can restart/interrupt the download.
+                        // NOTE: ACTION_TTS_DATA_INSTALLED is only sent for user-initiated
+                        // installs (Settings → TTS), NOT for silent background downloads
+                        // triggered by speak(). We therefore poll here as the only signal.
+                        if (testSpeakCountdown <= 0) {
+                            testSpeakCountdown = 6  // next check in 6 × 5 s = 30 s
+                            if (verifySingleVoiceSpeakable(languageCode)) {
+                                enterIntroduction()
+                                break
+                            }
+                            testSpeakFailures++
+                            Log.d("Haq/Onboard",
+                                "testSpeak($languageCode) failed " +
+                                "(failure $testSpeakFailures/$escapeAfterFailures) — " +
+                                "download in progress; next check in 30 s")
+
+                            // After ~3 minutes of failed synthesis, surface the
+                            // InstallingVoicePacks screen so the user sees progress and
+                            // has a Continue option. Background polling continues — if
+                            // the download finishes, onTtsDataInstalled() advances directly.
+                            if (testSpeakFailures >= escapeAfterFailures &&
+                                _step.value is OnboardingStep.PreparingVoices) {
+                                Log.w("Haq/Onboard",
+                                    "testSpeak failed $testSpeakFailures times — " +
+                                    "surfacing InstallingVoicePacks escape screen")
+                                _step.value = OnboardingStep.InstallingVoicePacks
+                            }
+                        } else {
+                            testSpeakCountdown--
+                        }
                     }
-                    voiceFailCount++
-                    if (voiceFailCount >= voiceFailThreshold) {
-                        Log.w("Haq/Onboard",
-                            "testSpeak failed $voiceFailCount times — advancing despite missing voice")
-                        enterIntroduction()
-                        break
-                    }
+                } else {
+                    testSpeakCountdown = 0
+                    testSpeakFailures  = 0
                 }
 
-                if (_step.value !is OnboardingStep.PreparingVoices) break
+                // Keep polling on both PreparingVoices and InstallingVoicePacks —
+                // the background download may complete while the escape screen is shown.
+                val currentStep = _step.value
+                if (currentStep !is OnboardingStep.PreparingVoices &&
+                    currentStep !is OnboardingStep.InstallingVoicePacks) break
 
                 delay(5_000L)
             }
@@ -477,7 +549,9 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun onVoicePackInstalled() {
         val nowSupported = TTSManager.checkLanguageSupport(selectedLanguage)
-        Log.d("Haq/Onboard", "onVoicePackInstalled: $selectedLanguage supported=$nowSupported")
+        Log.d("Haq/Onboard", "onVoicePackInstalled: $selectedLanguage supported=$nowSupported — user skipped wait")
+        voicePollingJob?.cancel()
+        voicePollingJob = null
         enterIntroduction()
     }
 
