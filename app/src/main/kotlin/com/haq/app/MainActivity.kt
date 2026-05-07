@@ -348,7 +348,7 @@ private fun LanguageSelectScreen(
     supportedLanguages: List<String>,
     onSelect: (String) -> Unit,
 ) {
-    // All 7 languages in canonical display order.
+    // All 9 languages in canonical display order.
     val allLanguages = listOf(
         Triple("hi", "हिंदी",   "Hindi"),
         Triple("te", "తెలుగు",  "Telugu"),
@@ -356,6 +356,8 @@ private fun LanguageSelectScreen(
         Triple("kn", "ಕನ್ನಡ",  "Kannada"),
         Triple("ta", "தமிழ்",  "Tamil"),
         Triple("bn", "বাংলা",  "Bengali"),
+        Triple("gu", "ગુજરાતી", "Gujarati"),
+        Triple("mr", "मराठी",  "Marathi"),
         Triple("en", "English", "English"),
     )
     // Filter to languages confirmed available on this device.
@@ -378,7 +380,7 @@ private fun LanguageSelectScreen(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "अपनी भाषा चुनें • భాష ఎంచుకోండి • ഭാഷ തിരഞ്ഞെടുക്കൂ • ಭಾಷೆ ಆಯ್ಕೆ • மொழி தேர்வு • ভাষা বেছে নিন",
+            text = "अपनी भाषा चुनें • భాష ఎంచుకోండి • ഭാഷ തിരഞ്ഞെടുക്കൂ • ಭಾಷೆ ಆಯ್ಕೆ • மொழி தேர்வு • ভাষা বেছে নিন • ભાષા પસંદ કરો • भाषा निवडा",
             fontSize = 11.sp,
             color = HaqMuted,
             textAlign = TextAlign.Center,
@@ -437,6 +439,8 @@ private fun InstallingVoicePacksScreen(language: String, attempt: Int, onContinu
         "kn" -> "ಕನ್ನಡ ಧ್ವನಿ ಸಿದ್ಧವಾಗುತ್ತಿದೆ..."
         "ta" -> "தமிழ் குரல் தயாராகிறது..."
         "bn" -> "বাংলা কণ্ঠস্বর প্রস্তুত হচ্ছে..."
+        "gu" -> "ગુજરાતી અવાજ તૈયાર થઈ રહ્યો છે..."
+        "mr" -> "मराठी आवाज तयार होत आहे..."
         "en" -> "Preparing English voice..."
         else -> "हिंदी आवाज़ तैयार की जा रही है..."
     }
@@ -446,6 +450,8 @@ private fun InstallingVoicePacksScreen(language: String, attempt: Int, onContinu
         "kn" -> "ಇದು ಒಂದು ಬಾರಿ ಮಾತ್ರ ಆಗುತ್ತದೆ."
         "ta" -> "இது ஒரே ஒரு முறை நடக்கும்."
         "bn" -> "এটি শুধুমাত্র একবার হবে।"
+        "gu" -> "આ માત્ર એક જ વાર થશે."
+        "mr" -> "हे फक्त एकदाच होईल."
         "en" -> "This will only happen once."
         else -> "यह केवल एक बार होगा।"
     }
@@ -455,6 +461,8 @@ private fun InstallingVoicePacksScreen(language: String, attempt: Int, onContinu
         "kn" -> "ಮುಂದುವರಿಸಿ"
         "ta" -> "தொடரவும்"
         "bn" -> "চালিয়ে যান"
+        "gu" -> "ચાલુ રાખો"
+        "mr" -> "पुढे जा"
         "en" -> "Continue"
         else -> "जारी रखें"
     }
@@ -536,6 +544,8 @@ private fun ConversationOnboardingScreen(
             "kn" -> "ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ…"
             "ta" -> "பேசுகிறேன்…"
             "bn" -> "বলছি…"
+            "gu" -> "બોલી રહ્યો છું…"
+            "mr" -> "बोलत आहे…"
             "en" -> "Speaking…"
             else -> "बोल रहा हूँ…"
         }
@@ -545,6 +555,8 @@ private fun ConversationOnboardingScreen(
             "kn" -> "ಮಾತನಾಡಿ…"
             "ta" -> "பேசுங்கள்…"
             "bn" -> "বলুন…"
+            "gu" -> "બોલો…"
+            "mr" -> "बोला…"
             "en" -> "Speak now…"
             else -> "बोलिए…"
         }
@@ -554,6 +566,8 @@ private fun ConversationOnboardingScreen(
             "kn" -> "ಅರ್ಥಮಾಡಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ…"
             "ta" -> "புரிந்துகொள்கிறேன்…"
             "bn" -> "বুঝছি…"
+            "gu" -> "સમજી રહ્યો છું…"
+            "mr" -> "समजत आहे…"
             "en" -> "Processing…"
             else -> "समझ रहा हूँ…"
         }
