@@ -558,16 +558,57 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         startNextQuestion()
     }
 
-    /** Routes a non-blank transcript to the correct step handler. */
-    fun submitAnswer(transcript: String) {
+    /**
+     * Routes a non-blank transcript to the correct step handler.
+     * Passes the transcript through Gemma first to extract the structured
+     * value from natural-language input ("My name is Prashant" → "Prashant").
+     * Falls back to the raw transcript if extraction fails or times out.
+     */
+    suspend fun submitAnswer(transcript: String) {
         retryCount = 0
-        when (_step.value) {
-            is OnboardingStep.AskName       -> submitName(transcript)
-            is OnboardingStep.AskState      -> submitState(transcript)
-            is OnboardingStep.AskCaste      -> submitCaste(transcript)
-            is OnboardingStep.AskOccupation -> submitOccupation(transcript)
+        val step = _step.value
+        val extracted = extractForStep(step, transcript)
+        when (step) {
+            is OnboardingStep.AskName       -> submitName(extracted)
+            is OnboardingStep.AskState      -> submitState(extracted)
+            is OnboardingStep.AskCaste      -> submitCaste(extracted)
+            is OnboardingStep.AskOccupation -> submitOccupation(extracted)
             else -> {}
         }
+    }
+
+    /**
+     * Builds a terse extraction prompt for [step] and runs it through Gemma.
+     * The prompt is placed entirely in the user turn — the system prompt is not
+     * changed — so Gemma sees the task instructions as an explicit override.
+     * Returns [transcript] unchanged if the engine is not ready or extraction fails.
+     */
+    private suspend fun extractForStep(step: OnboardingStep, transcript: String): String {
+        if (!GemmaManager.isModelReady()) return transcript
+        val prompt = when (step) {
+            is OnboardingStep.AskName ->
+                "TASK: Extract the person's name from their reply.\n" +
+                "Reply: \"$transcript\"\n" +
+                "Output the name only. Nothing else."
+
+            is OnboardingStep.AskState ->
+                "TASK: Extract the Indian state name from their reply.\n" +
+                "Reply: \"$transcript\"\n" +
+                "Output the state name only. Nothing else."
+
+            is OnboardingStep.AskCaste ->
+                "TASK: Identify the caste category from their reply.\n" +
+                "Reply: \"$transcript\"\n" +
+                "Output exactly one of: SC, ST, OBC, General. Nothing else."
+
+            is OnboardingStep.AskOccupation ->
+                "TASK: Extract the occupation from their reply.\n" +
+                "Reply: \"$transcript\"\n" +
+                "Output the job or occupation only. Nothing else."
+
+            else -> return transcript
+        }
+        return GemmaManager.extractField(prompt, fallback = transcript)
     }
 
     fun submitOccupation(occupation: String) {
