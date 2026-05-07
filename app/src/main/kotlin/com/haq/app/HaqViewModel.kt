@@ -393,14 +393,18 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 // Use NonCancellable so the save always completes even if cancelled
                 if (fullResponse.isNotEmpty()) {
                     activeProfile?.let { p ->
+                        val responseStr = fullResponse.toString()
                         withContext(NonCancellable) {
                             ProfileManager.saveLastConversation(
                                 profileId = p.id,
                                 query = prompt,
-                                response = fullResponse.toString(),
+                                response = responseStr,
                             )
                             Log.d("Haq/VM", "Saved ${fullResponse.length} chars for profile ${p.id}")
                         }
+                        // Keep the in-memory profile in sync so the NEXT query
+                        // immediately sees hasHistory=true without a DB round-trip.
+                        activeProfile = p.copy(lastQuery = prompt, lastResponse = responseStr)
                     }
                 }
                 isGenerating = false
