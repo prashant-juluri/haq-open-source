@@ -4,132 +4,157 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 // ── Download state ────────────────────────────────────────────────────────────
 
 sealed class DownloadState {
-    object Idle : DownloadState()
-    object Checking : DownloadState()
-    object WifiRequired : DownloadState()
+    object Idle        : DownloadState()
+    object Checking    : DownloadState()
+    object WifiRequired: DownloadState()
     data class Downloading(val progressPercent: Int) : DownloadState()
-    object Complete : DownloadState()
+    object Complete    : DownloadState()
     data class Error(val message: String) : DownloadState()
 }
 
 // ── ModelDownloadManager ──────────────────────────────────────────────────────
 
+/**
+ * Manages the one-time Gemma model download via WorkManager.
+ *
+ * The actual download runs in [ModelDownloadWorker], a foreground CoroutineWorker
+ * that survives the user switching apps or the OS killing the foreground Activity.
+ * This class enqueues the worker, observes its [WorkInfo], and translates state
+ * changes into the [downloadState] flow that the UI already watches.
+ *
+ * On process restart (e.g. app reopened mid-download), [observeWorkInfo] is called
+ * from [init] immediately, so the in-progress worker is picked up without re-enqueueing.
+ */
 class ModelDownloadManager(private val context: Context) {
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val workManager = WorkManager.getInstance(context)
 
     private val _state = MutableStateFlow<DownloadState>(DownloadState.Idle)
     val downloadState: StateFlow<DownloadState> = _state.asStateFlow()
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.SECONDS)      // no timeout — file is ~2.4 GB
-        .build()
+    init {
+        // Begin observing immediately so that if a worker is already running
+        // (app reopened mid-download), we pick up its current progress.
+        observeWorkInfo()
+    }
 
     /**
-     * Checks whether the model exists; downloads it if not.
-     * Safe to call multiple times — exits immediately if already [DownloadState.Complete].
-     * All file I/O and network checks run on [Dispatchers.IO].
+     * Checks whether the model is already on disk; if not, enqueues the download
+     * worker. Safe to call multiple times — [ExistingWorkPolicy.KEEP] means a
+     * running or enqueued job is never interrupted.
      */
-    suspend fun startDownload() {
-        // Already complete — nothing to do
-        if (_state.value is DownloadState.Complete) return
+    fun startDownload() {
+        scope.launch { checkAndEnqueue(replace = false) }
+    }
 
+    /**
+     * Cancels any failed or stuck job and starts a fresh download.
+     * Called when the user taps "Retry" on the error screen.
+     */
+    fun retryDownload() {
+        scope.launch { checkAndEnqueue(replace = true) }
+    }
+
+    // ── Private ───────────────────────────────────────────────────────────────
+
+    private suspend fun checkAndEnqueue(replace: Boolean) {
         _state.value = DownloadState.Checking
 
-        // File existence and size checks are blocking syscalls — keep them off Main.
-        val (modelFile, alreadyComplete) = withContext(Dispatchers.IO) {
-            val file = File(context.filesDir, MODEL_FILENAME)
-            val fileSize = if (file.exists()) file.length() else 0L
-            Log.d("Haq/Download",
-                "checkAndDownload() called, exists=${file.exists()}, size=$fileSize")
-            if (file.exists() && fileSize > MIN_MODEL_SIZE) {
-                file to true
-            } else {
-                if (file.exists()) {
-                    Log.w("Haq/Download",
-                        "Model file is too small ($fileSize bytes) — incomplete download, re-downloading")
-                    file.delete()
-                }
-                file to false
-            }
+        val modelFile = File(context.filesDir, MODEL_FILENAME)
+        val alreadyOnDisk = withContext(Dispatchers.IO) {
+            modelFile.exists() && modelFile.length() > MIN_MODEL_SIZE
         }
 
-        if (alreadyComplete) {
+        if (alreadyOnDisk) {
+            Log.d("Haq/Download", "Model already on disk — skipping download")
             _state.value = DownloadState.Complete
             return
         }
 
         if (!isOnWifi()) {
+            Log.d("Haq/Download", "No WiFi — showing WifiRequired")
             _state.value = DownloadState.WifiRequired
             return
         }
 
-        downloadModel(modelFile)
+        val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    // UNMETERED = WiFi. Safety net: WorkManager pauses the job
+                    // automatically if WiFi drops mid-download and resumes when
+                    // it returns — no manual retry needed.
+                    .setRequiredNetworkType(NetworkType.UNMETERED)
+                    .build()
+            )
+            .build()
+
+        val policy = if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
+        workManager.enqueueUniqueWork(ModelDownloadWorker.WORK_NAME, policy, request)
+        Log.d("Haq/Download", "Worker enqueued (policy=$policy)")
+        // WorkInfo changes are delivered to observeWorkInfo() which updates _state.
     }
 
-    // ── Private ───────────────────────────────────────────────────────────────
-
-    private suspend fun downloadModel(dest: File) = withContext(Dispatchers.IO) {
-        val temp = File(context.filesDir, "$MODEL_FILENAME.tmp")
-        temp.delete()   // clean up any previous partial download
-
-        try {
-            _state.value = DownloadState.Downloading(0)
-
-            val request = Request.Builder().url(MODEL_DOWNLOAD_URL).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    _state.value = DownloadState.Error("Server error ${response.code}")
-                    return@withContext
-                }
-
-                val body = response.body ?: run {
-                    _state.value = DownloadState.Error("Empty response body")
-                    return@withContext
-                }
-
-                val totalBytes = body.contentLength()   // -1 if unknown
-                var downloadedBytes = 0L
-
-                temp.outputStream().buffered().use { out ->
-                    body.byteStream().use { input ->
-                        val buf = ByteArray(8 * 1024 * 1024)   // 8 MB read buffer
-                        var n: Int
-                        while (input.read(buf).also { n = it } != -1) {
-                            out.write(buf, 0, n)
-                            downloadedBytes += n
-                            if (totalBytes > 0) {
-                                val pct = ((downloadedBytes * 100L) / totalBytes).toInt()
-                                _state.value = DownloadState.Downloading(pct.coerceIn(0, 99))
+    /**
+     * Collects the WorkInfo flow for the unique download job and maps each
+     * [WorkInfo.State] to the corresponding [DownloadState]. Runs for the
+     * lifetime of the [scope] (process lifetime).
+     */
+    private fun observeWorkInfo() {
+        scope.launch {
+            workManager
+                .getWorkInfosForUniqueWorkFlow(ModelDownloadWorker.WORK_NAME)
+                .collect { infos ->
+                    val info = infos.firstOrNull() ?: return@collect
+                    when (info.state) {
+                        WorkInfo.State.ENQUEUED,
+                        WorkInfo.State.BLOCKED  -> {
+                            // Enqueued = waiting to start (constraints not yet met).
+                            // Keep showing Downloading(0) so the UI doesn't flicker
+                            // between Checking and Downloading.
+                            if (_state.value !is DownloadState.Downloading) {
+                                _state.value = DownloadState.Downloading(0)
                             }
+                        }
+                        WorkInfo.State.RUNNING  -> {
+                            val pct = info.progress.getInt(ModelDownloadWorker.KEY_PROGRESS, 0)
+                            _state.value = DownloadState.Downloading(pct)
+                        }
+                        WorkInfo.State.SUCCEEDED -> {
+                            Log.d("Haq/Download", "Worker succeeded")
+                            _state.value = DownloadState.Complete
+                        }
+                        WorkInfo.State.FAILED    -> {
+                            val msg = info.outputData.getString(ModelDownloadWorker.KEY_ERROR)
+                                ?: "Download failed"
+                            Log.e("Haq/Download", "Worker failed: $msg")
+                            _state.value = DownloadState.Error(msg)
+                        }
+                        WorkInfo.State.CANCELLED -> {
+                            Log.w("Haq/Download", "Worker cancelled")
+                            _state.value = DownloadState.Error("Download cancelled")
                         }
                     }
                 }
-
-                // Atomic rename to final path
-                if (!temp.renameTo(dest)) {
-                    temp.delete()
-                    _state.value = DownloadState.Error("Failed to save model — check storage space")
-                    return@withContext
-                }
-
-                _state.value = DownloadState.Complete
-            }
-        } catch (e: Exception) {
-            temp.delete()
-            _state.value = DownloadState.Error(e.message ?: "Download failed")
         }
     }
 
@@ -141,11 +166,7 @@ class ModelDownloadManager(private val context: Context) {
     }
 
     companion object {
-        const val MODEL_FILENAME = "gemma-4-E2B-it.litertlm"
-        const val MIN_MODEL_SIZE = 1_000_000_000L  // 1GB — incomplete downloads are smaller
-
-        // Placeholder — replace with final CDN URL before shipping
-        private const val MODEL_DOWNLOAD_URL =
-            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+        const val MODEL_FILENAME  = "gemma-4-E2B-it.litertlm"
+        const val MIN_MODEL_SIZE  = 1_000_000_000L  // 1 GB
     }
 }

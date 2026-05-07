@@ -117,4 +117,7 @@ dependencies {
 
     // ── OkHttp — one-time model download over WiFi ───────────────────────────
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // ── WorkManager — keeps model download alive when app is backgrounded ────
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }
