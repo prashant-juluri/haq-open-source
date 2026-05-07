@@ -216,6 +216,11 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun onMicButtonPressed() {
         if (_engineState.value !is EngineState.Ready) return
+        // Tapping while Gemma is streaming saves the partial response and returns to READY.
+        if (_appState.value == AppState.THINKING) {
+            resetToIdle()
+            return
+        }
         if (_appState.value != AppState.READY) return
 
         viewModelScope.launch {
