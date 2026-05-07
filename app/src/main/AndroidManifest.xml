@@ -27,10 +27,11 @@
     <!-- Vibration for mic-active feedback -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- WorkManager foreground service for background model download -->
+    <!-- Foreground services: model download + voice response background keep-alive -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <!-- Download progress notification (Android 13+; WorkManager degrades gracefully if denied) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Notifications (Android 13+; both services degrade gracefully if denied) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -54,6 +55,12 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- Keeps the process alive while Gemma generates and TTS speaks a response -->
+        <service
+            android:name=".HaqResponseService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"

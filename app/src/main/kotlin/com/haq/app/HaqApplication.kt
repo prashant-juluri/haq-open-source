@@ -21,14 +21,27 @@ class HaqApplication : Application() {
 
     private fun createNotificationChannels() {
         val nm = getSystemService(NotificationManager::class.java)
+
         // Low importance: no sound, no heads-up — just a persistent progress bar.
-        val channel = NotificationChannel(
-            ModelDownloadWorker.CHANNEL_ID,
-            "Model Download",
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = "Shows progress while the AI model downloads in the background"
-        }
-        nm.createNotificationChannel(channel)
+        nm.createNotificationChannel(
+            NotificationChannel(
+                ModelDownloadWorker.CHANNEL_ID,
+                "Model Download",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Shows progress while the AI model downloads in the background"
+            }
+        )
+
+        // Low importance: silent persistent notification while Gemma speaks a response.
+        nm.createNotificationChannel(
+            NotificationChannel(
+                HaqResponseService.CHANNEL_ID,
+                "Voice Response",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Keeps the AI response alive when you switch apps"
+            }
+        )
     }
 }
