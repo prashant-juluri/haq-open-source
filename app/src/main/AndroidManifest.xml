@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <queries>
         <package android:name="com.google.android.tts" />
@@ -26,6 +27,12 @@
     <!-- Vibration for mic-active feedback -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- WorkManager foreground service for background model download -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Download progress notification (Android 13+; WorkManager degrades gracefully if denied) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".HaqApplication"
         android:allowBackup="false"
@@ -41,6 +48,12 @@
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="ocr_latin,ocr_devanagari" />
+
+        <!-- WorkManager foreground service that keeps the model download alive -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <activity
             android:name=".MainActivity"

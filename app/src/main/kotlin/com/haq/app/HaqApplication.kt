@@ -1,7 +1,10 @@
 package com.haq.app
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import com.haq.app.data.ProfileManager
+import com.haq.app.inference.ModelDownloadWorker
 import com.haq.app.tts.TTSManager
 
 class HaqApplication : Application() {
@@ -13,5 +16,19 @@ class HaqApplication : Application() {
         // or its ViewModels are created.
         TTSManager.init(this)
         ProfileManager.init(this)
+        createNotificationChannels()
+    }
+
+    private fun createNotificationChannels() {
+        val nm = getSystemService(NotificationManager::class.java)
+        // Low importance: no sound, no heads-up — just a persistent progress bar.
+        val channel = NotificationChannel(
+            ModelDownloadWorker.CHANNEL_ID,
+            "Model Download",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "Shows progress while the AI model downloads in the background"
+        }
+        nm.createNotificationChannel(channel)
     }
 }

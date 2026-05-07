@@ -202,7 +202,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     // ── Actions ───────────────────────────────────────────────────────────────
 
     fun retryDownload() {
-        viewModelScope.launch { downloadManager.startDownload() }
+        downloadManager.retryDownload()
     }
 
     fun retryEngine() {
@@ -530,7 +530,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startDownload() {
-        viewModelScope.launch { downloadManager.startDownload() }
+        downloadManager.startDownload()
     }
 
     override fun onCleared() {
