@@ -923,6 +923,14 @@ private fun ProfileSwitcherSheet(
 
 @Composable
 private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
+    val scrollState = rememberScrollState()
+
+    // Scroll to the bottom whenever new tokens arrive so the latest text
+    // is always visible while Gemma streams and TTS speaks.
+    LaunchedEffect(text) {
+        scrollState.scrollTo(scrollState.maxValue)
+    }
+
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -933,7 +941,7 @@ private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
         Box(
             modifier = Modifier
                 .padding(20.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
             contentAlignment = Alignment.TopStart,
         ) {
             Text(
