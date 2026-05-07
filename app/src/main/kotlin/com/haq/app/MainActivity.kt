@@ -771,12 +771,13 @@ private fun MainAppContent(
 
         // ── Status hint ───────────────────────────────────────────────────────
         Text(
-            text = when (appState) {
-                AppState.LOADING   -> "Loading model…"
-                AppState.READY     -> "Tap to speak"
-                AppState.LISTENING -> "Speak now…"
-                AppState.THINKING  -> "Tap to pause"
-                AppState.ERROR     -> "Something went wrong"
+            text = when {
+                appState == AppState.LOADING             -> "Loading model…"
+                appState == AppState.LISTENING           -> "Speak now…"
+                appState == AppState.THINKING            -> "Tap to pause"
+                appState == AppState.ERROR               -> "Something went wrong"
+                appState == AppState.READY && ttsSpeaking -> "Tap to stop"
+                else                                     -> "Tap to speak"
             },
             color = HaqMuted,
             fontSize = 12.sp,
@@ -790,7 +791,7 @@ private fun MainAppContent(
             appState   = appState,
             isSpeaking = ttsSpeaking,
             onClick    = {
-                if (appState == AppState.THINKING) onPauseTap()
+                if (appState == AppState.THINKING || ttsSpeaking) onPauseTap()
                 else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             },
         )
@@ -923,6 +924,14 @@ private fun ProfileSwitcherSheet(
 
 @Composable
 private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
+    val scrollState = rememberScrollState()
+
+    // Scroll to the bottom whenever new tokens arrive so the latest text
+    // is always visible while Gemma streams and TTS speaks.
+    LaunchedEffect(text) {
+        scrollState.scrollTo(scrollState.maxValue)
+    }
+
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -933,7 +942,7 @@ private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
         Box(
             modifier = Modifier
                 .padding(20.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
             contentAlignment = Alignment.TopStart,
         ) {
             Text(
@@ -951,9 +960,9 @@ private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Unit) {
     val isActive  = appState == AppState.LISTENING || appState == AppState.THINKING
-    // Enabled when ready to listen, or when generating (to allow pause).
-    // Blocked while TTS is speaking (READY+speaking) and while STT is active (LISTENING).
-    val isEnabled = (appState == AppState.READY && !isSpeaking) || appState == AppState.THINKING
+    // Enabled when: generating (pause), TTS still speaking after generation (stop),
+    // or fully idle (new question). Blocked only during LOADING and LISTENING.
+    val isEnabled = appState == AppState.READY || appState == AppState.THINKING
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -969,11 +978,10 @@ private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Un
     )
     val containerColor by animateColorAsState(
         targetValue = when {
-            // THINKING always shows blue so the user knows they can pause — even
-            // when TTS is simultaneously reading out streamed sentences.
+            // Blue during generation AND while TTS is finishing after generation —
+            // both states are stoppable so both show the same active colour.
             appState == AppState.THINKING  -> Color(0xFF42A5F5)
-            // Grey only in READY+speaking (TTS playing a previous response) and LOADING.
-            isSpeaking                     -> HaqMuted
+            isSpeaking                     -> Color(0xFF42A5F5)
             appState == AppState.LOADING   -> HaqMuted
             appState == AppState.LISTENING -> Color(0xFFE53935)
             else                           -> HaqGreen
@@ -1000,11 +1008,13 @@ private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Un
             elevation = FloatingActionButtonDefaults.elevation(10.dp, 14.dp),
         ) {
             Icon(
-                imageVector = if (appState == AppState.THINKING) Icons.Filled.Stop else Icons.Filled.Mic,
-                contentDescription = when (appState) {
-                    AppState.THINKING  -> "Pause"
-                    AppState.LISTENING -> "Recording"
-                    else               -> "Speak"
+                imageVector = if (appState == AppState.THINKING || isSpeaking)
+                    Icons.Filled.Stop else Icons.Filled.Mic,
+                contentDescription = when {
+                    appState == AppState.THINKING -> "Pause"
+                    isSpeaking                    -> "Stop"
+                    appState == AppState.LISTENING -> "Recording"
+                    else                           -> "Speak"
                 },
                 modifier = Modifier.size(40.dp),
             )
