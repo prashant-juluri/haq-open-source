@@ -285,6 +285,13 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             _appState.value = AppState.THINKING
             _responseText.value = ""
 
+            // Start a foreground service so Android does not kill the process
+            // if the user switches apps mid-response. The service does no work —
+            // it is purely a process-priority anchor. Stopped in finally below.
+            getApplication<android.app.Application>().startForegroundService(
+                android.content.Intent(getApplication(), HaqResponseService::class.java)
+            )
+
             // Always instruct Gemma to respond in the profile's language.
             // Profile context (name, state, category, occupation) is prepended to the
             // user query — NOT the system prompt. Embedding it in the system prompt
@@ -407,6 +414,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 isGenerating = false
                 currentQueryJob = null
                 _appState.value = AppState.READY
+                // Release the process-priority anchor now that generation is done.
+                withContext(NonCancellable) {
+                    getApplication<android.app.Application>().stopService(
+                        android.content.Intent(getApplication(), HaqResponseService::class.java)
+                    )
+                }
             }
         }
     }
