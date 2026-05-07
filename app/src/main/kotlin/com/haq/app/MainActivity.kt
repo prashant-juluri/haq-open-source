@@ -49,6 +49,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -255,6 +256,7 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
                     activeProfileName = activeProfile,
                     profiles          = profiles,
                     onMicTap          = { haqVm.onMicButtonPressed() },
+                    onPauseTap        = { haqVm.resetToIdle() },
                     onSwitchProfile   = { profileId ->
                         // Stop TTS and cancel any in-flight Gemma query before switching.
                         // switchProfile() calls reloadActiveProfile() which restores the
@@ -708,6 +710,7 @@ private fun MainAppContent(
     activeProfileName: String,
     profiles: List<UserProfile>,
     onMicTap: () -> Unit,
+    onPauseTap: () -> Unit,
     onSwitchProfile: (Int) -> Unit,
     onAddProfile: () -> Unit,
 ) {
@@ -771,7 +774,7 @@ private fun MainAppContent(
                 AppState.LOADING   -> "Loading model…"
                 AppState.READY     -> "Tap to speak"
                 AppState.LISTENING -> "Speak now…"
-                AppState.THINKING  -> "Processing…"
+                AppState.THINKING  -> "Tap to pause"
                 AppState.ERROR     -> "Something went wrong"
             },
             color = HaqMuted,
@@ -785,7 +788,10 @@ private fun MainAppContent(
         MicButton(
             appState   = appState,
             isSpeaking = ttsSpeaking,
-            onClick    = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+            onClick    = {
+                if (appState == AppState.THINKING) onPauseTap()
+                else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            },
         )
 
         Spacer(Modifier.height(28.dp))
@@ -944,8 +950,9 @@ private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Unit) {
     val isActive  = appState == AppState.LISTENING || appState == AppState.THINKING
-    // Block tap while TTS is playing so users can't cut off the response
-    val isEnabled = appState == AppState.READY && !isSpeaking
+    // Enabled when ready to listen, or when generating (to allow pause).
+    // Blocked while TTS is speaking (READY+speaking) and while STT is active (LISTENING).
+    val isEnabled = (appState == AppState.READY && !isSpeaking) || appState == AppState.THINKING
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -961,10 +968,13 @@ private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Un
     )
     val containerColor by animateColorAsState(
         targetValue = when {
-            isSpeaking                  -> HaqMuted   // grayed while TTS plays
+            // THINKING always shows blue so the user knows they can pause — even
+            // when TTS is simultaneously reading out streamed sentences.
+            appState == AppState.THINKING  -> Color(0xFF42A5F5)
+            // Grey only in READY+speaking (TTS playing a previous response) and LOADING.
+            isSpeaking                     -> HaqMuted
             appState == AppState.LOADING   -> HaqMuted
             appState == AppState.LISTENING -> Color(0xFFE53935)
-            appState == AppState.THINKING  -> Color(0xFF42A5F5)
             else                           -> HaqGreen
         },
         animationSpec = tween(300),
@@ -989,8 +999,12 @@ private fun MicButton(appState: AppState, isSpeaking: Boolean, onClick: () -> Un
             elevation = FloatingActionButtonDefaults.elevation(10.dp, 14.dp),
         ) {
             Icon(
-                imageVector = Icons.Filled.Mic,
-                contentDescription = if (isActive) "Recording" else "Speak",
+                imageVector = if (appState == AppState.THINKING) Icons.Filled.Stop else Icons.Filled.Mic,
+                contentDescription = when (appState) {
+                    AppState.THINKING  -> "Pause"
+                    AppState.LISTENING -> "Recording"
+                    else               -> "Speak"
+                },
                 modifier = Modifier.size(40.dp),
             )
         }
