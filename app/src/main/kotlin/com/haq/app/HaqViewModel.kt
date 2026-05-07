@@ -317,17 +317,25 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     // Cap the previous response at 800 chars to stay within the KV budget
                     // (2048 tokens total; system ~70, profile ~40, query ~50, response ~400).
                     if (p.lastQuery.isNotBlank() && p.lastResponse.isNotBlank()) {
-                        // Take the TAIL of the previous response — the end contains the
-                        // action steps and helpline which are most useful for follow-up.
-                        // Hard limit: 1500 chars. Indian scripts tokenize at ~1.5–2.5
-                        // chars/token (SentencePiece), so 1500 chars ≈ 600–1000 tokens.
-                        // Budget: 2048 KV − 70 (system) − 160 (profile+query) − 600
-                        // (response headroom) = ~1218 tokens for history. 1500 chars
-                        // stays safely within that at worst-case tokenization.
-                        val prevResponse = if (p.lastResponse.length > 1500)
-                            "…" + p.lastResponse.takeLast(1500)
+                        // Dynamically compute how many chars of history fit in the KV
+                        // cache. Estimate tokens for every fixed part of the prompt
+                        // (system prompt is a known constant; everything else is
+                        // measured), then convert remaining budget to chars.
+                        val fixedText = buildString {
+                            append("IMPORTANT: Respond ONLY in $languageName. ")
+                            append("Do not use any other language. ")
+                            append("User: ${p.name}, State: ${p.state}, ")
+                            append("Category: ${p.casteCategory}, Occupation: ${p.occupation}. ")
+                            append("Previous question: ${p.lastQuery} Previous answer:  ")
+                            append("Question: $prompt")
+                        }
+                        val charBudget = historyCharBudget(fixedText)
+                        val prevResponse = if (p.lastResponse.length > charBudget)
+                            "…" + p.lastResponse.takeLast(charBudget)
                         else
                             p.lastResponse
+                        Log.d("Haq/Gemma", "History: budget=${charBudget}chars " +
+                            "actual=${prevResponse.length}chars")
                         append("Previous question: ${p.lastQuery} ")
                         append("Previous answer: $prevResponse ")
                     }
@@ -421,6 +429,48 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Estimates the token count of [text] using a conservative, script-aware
+     * heuristic. Errs on the side of over-counting (fewer chars allowed = safer).
+     *
+     *   ASCII / Latin      ≈ 4 chars/token  → 0.25 tokens/char
+     *   Latin extended     ≈ 2.5 chars/token → 0.40 tokens/char
+     *   Indic scripts      ≈ 1.5 chars/token → 0.67 tokens/char  ← worst case used
+     *   Everything else    ≈ 1.5 chars/token → 0.67 tokens/char
+     *
+     * Indic Unicode blocks covered: Devanagari (hi/mr/ne), Bengali (bn/as),
+     * Gujarati (gu), Oriya (or), Tamil (ta), Telugu (te), Kannada (kn),
+     * Malayalam (ml) — all fall in U+0900–U+0D7F.
+     */
+    private fun estimateTokens(text: String): Int {
+        var count = 0.0
+        for (ch in text) {
+            count += when (ch.code) {
+                in 0x0000..0x007F -> 0.25   // ASCII
+                in 0x0080..0x024F -> 0.40   // Latin extended
+                in 0x0900..0x0D7F -> 0.67   // Indic scripts (~1.5 chars/token)
+                else              -> 0.67   // conservative fallback
+            }
+        }
+        return kotlin.math.ceil(count).toInt()
+    }
+
+    /**
+     * Returns the number of characters of previous-response history that can
+     * safely be injected into the prompt without overflowing the KV cache.
+     *
+     * [fixedText] is everything in the user turn EXCEPT the history itself
+     * (language instruction + profile metadata + previous question label +
+     * new question). Tokens are estimated conservatively so the actual
+     * history chars are always an underestimate of what would fit.
+     */
+    private fun historyCharBudget(fixedText: String): Int {
+        val fixedTokens = SYSTEM_PROMPT_TOKENS + estimateTokens(fixedText)
+        val remaining = KV_CACHE_TOKENS - RESPONSE_RESERVE_TOKENS - fixedTokens
+        // Convert tokens → chars at the same conservative 1.5 chars/token ratio.
+        return maxOf(0, (remaining * 1.5).toInt())
+    }
+
     private fun startDownload() {
         viewModelScope.launch { downloadManager.startDownload() }
     }
@@ -429,5 +479,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
         TTSManager.shutdown()
         GemmaManager.shutdown()
+    }
+
+    companion object {
+        // Must match LiteRTEngine.MAX_TOKENS (2048).
+        private const val KV_CACHE_TOKENS = 2048
+        // Tokens reserved for Gemma's output — tighten if responses feel truncated,
+        // loosen if KV overflow errors appear.
+        private const val RESPONSE_RESERVE_TOKENS = 600
+        // System prompt token count measured from prefill logs.
+        private const val SYSTEM_PROMPT_TOKENS = 70
     }
 }
