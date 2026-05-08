@@ -14,19 +14,27 @@ import java.io.File
  * SQLiteDatabase can open it (assets are not directly openable as a file path).
  * All subsequent calls skip the copy if the file already exists and is non-empty.
  *
- * The FTS5 query uses profile fields (occupation, state, caste) as search terms
- * and returns the top [MAX_RESULTS] rag_chunk strings ranked by BM25.
+ * Retrieval uses scored SQL LIKE matching on structured columns (state,
+ * scheme_tags, eligibility) rather than FTS full-text search. This avoids
+ * the FTS4 false-positive problem where "OBC" in passing eligibility text
+ * (e.g. "not available for OBC") scores as a caste match.
+ *
+ * Scoring per scheme (higher = more relevant):
+ *   +4  scheme_tags contains the caste label ("Scheduled Caste" etc.)
+ *   +3  state column matches the user's state
+ *   +1  level = 'Central' (relevant to all states)
+ *   +2  scheme_tags or eligibility contains each occupation keyword
  */
 object SchemeRepository {
 
-    private const val DB_ASSET   = "schemes.db"
-    private const val TAG        = "Haq/RAG"
+    private const val DB_ASSET    = "schemes.db"
+    private const val TAG         = "Haq/RAG"
     private const val MAX_RESULTS = 4
 
     /**
-     * Returns rag_chunk strings for the top [MAX_RESULTS] schemes that match
-     * the user's profile. Returns an empty list on any error so callers can
-     * always proceed with a Gemma prompt that lacks RAG context.
+     * Returns rag_chunk strings for the top [MAX_RESULTS] schemes ranked by
+     * how closely they match the user's profile. Returns an empty list on any
+     * error so callers can always proceed with a Gemma prompt that lacks context.
      */
     suspend fun search(
         context: Context,
@@ -52,16 +60,11 @@ object SchemeRepository {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /**
-     * Ensures schemes.db exists in filesDir (copies from assets once).
-     * A size check guards against a previous incomplete copy.
-     */
     private fun ensureDatabase(context: Context): File {
         val dbFile = File(context.filesDir, DB_ASSET)
-        // 1 MB threshold — a valid schemes.db is always > 20 MB
         if (dbFile.exists() && dbFile.length() > 1_000_000L) return dbFile
 
-        Log.d(TAG, "Copying $DB_ASSET from assets (${dbFile.absolutePath})")
+        Log.d(TAG, "Copying $DB_ASSET from assets")
         context.assets.open(DB_ASSET).use { input ->
             dbFile.outputStream().use { output -> input.copyTo(output) }
         }
@@ -70,18 +73,19 @@ object SchemeRepository {
     }
 
     /**
-     * Runs an FTS5 MATCH query against schemes_fts and returns rag_chunks.
+     * Scores every scheme in [db] against the user's profile and returns the
+     * top [MAX_RESULTS] rag_chunks. All matching is LIKE-based on structured
+     * columns so caste/state/occupation terms never accidentally match
+     * incidental text in unrelated schemes.
      *
-     * Search terms are derived from the user's English profile fields because
-     * the scheme data is in English and FTS5 can't match cross-language.
+     * Score components:
+     *   Caste  — scheme_tags LIKE '%Scheduled Caste%'  (+4, exact label match)
+     *   State  — state LIKE '%Rajasthan%'               (+3, state-specific)
+     *            level = 'Central'                      (+1, central schemes apply everywhere)
+     *   Occ.   — occupation words in scheme_tags or eligibility (+2 per word)
      *
-     * Caste codes ("SC", "ST", "OBC") are mapped to their full tag labels
-     * ("Scheduled Caste", "Scheduled Tribe", "OBC") and searched with a
-     * column-restriction to scheme_tags so they don't match incidental
-     * occurrences of "SC" inside other words or sentences.
-     *
-     * A simple keyword pass over the raw [query] string also extracts any
-     * ASCII words longer than 3 chars (handles "pension", "ration", etc.).
+     * Minimum score of 2 required to appear in results (avoids returning
+     * completely unrelated schemes when profile is sparse).
      */
     private fun querySchemes(
         db: SQLiteDatabase,
@@ -90,70 +94,70 @@ object SchemeRepository {
         casteCategory: String,
         occupation: String,
     ): List<String> {
-        val terms = mutableListOf<String>()
+        val args = mutableListOf<String>()
 
-        // Occupation and state — general FTS across all columns
-        if (occupation.isNotBlank()) terms.add(ftsQuote(occupation))
-        if (state.isNotBlank())      terms.add(ftsQuote(state))
+        // ── Caste score (+4) ──────────────────────────────────────────────────
+        val casteLabel = casteToTag(casteCategory)
+        val casteSql = if (casteLabel != null) {
+            args.add("%$casteLabel%")
+            "CASE WHEN scheme_tags LIKE ? THEN 4 ELSE 0 END"
+        } else "0"
 
-        // Caste — search as a full phrase ("Scheduled Caste") so it only matches
-        // schemes that explicitly name the category, not incidental "SC" abbreviations.
-        val casteTag = casteToTag(casteCategory)
-        if (casteTag != null) terms.add(ftsQuote(casteTag))
+        // ── State score (+3 state match, +1 central) ──────────────────────────
+        val stateSql = if (state.isNotBlank()) {
+            args.add("%${state.trim()}%")
+            "CASE WHEN state LIKE ? THEN 3 WHEN level = 'Central' THEN 1 ELSE 0 END"
+        } else "CASE WHEN level = 'Central' THEN 1 ELSE 0 END"
 
-        // Extract ASCII keywords from the raw query (e.g. "pension", "ration")
-        query.split(Regex("\\s+"))
-            .filter { it.length > 3 && it.all { c -> c.code < 0x0080 } }
-            .mapNotNull { w -> w.replace(Regex("[^A-Za-z0-9]"), "").takeIf { it.length > 3 } }
-            .forEach { terms.add(it) }
+        // ── Occupation score (+2 per keyword found in scheme_tags or eligibility)
+        val occWords = occupation
+            .split(Regex("\\s+"))
+            .map { it.trim() }
+            .filter { it.length > 3 }
+            .distinct()
 
-        if (terms.isEmpty()) {
-            Log.d(TAG, "No usable search terms — skipping RAG")
-            return emptyList()
+        val occParts = occWords.map { word ->
+            args.add("%$word%")
+            args.add("%$word%")
+            "CASE WHEN scheme_tags LIKE ? OR eligibility LIKE ? THEN 2 ELSE 0 END"
         }
+        val occSql = if (occParts.isNotEmpty()) occParts.joinToString(" + ") else "0"
 
-        val ftsQuery = terms.distinct().joinToString(" OR ")
-        Log.d(TAG, "FTS query: \"$ftsQuery\"")
+        val scoreSql = "($casteSql + $stateSql + $occSql)"
 
-        db.rawQuery(
-            """
-            SELECT s.rag_chunk
-            FROM schemes_fts fts
-            JOIN schemes s ON s.rowid = fts.docid
-            WHERE schemes_fts MATCH ?
-              AND s.rag_chunk IS NOT NULL
-              AND s.rag_chunk != ''
+        Log.d(TAG, "Scoring: caste=$casteLabel state=$state occWords=$occWords")
+
+        val sql = """
+            SELECT rag_chunk
+            FROM (
+                SELECT rag_chunk, $scoreSql AS score
+                FROM schemes
+                WHERE rag_chunk IS NOT NULL AND rag_chunk != ''
+            )
+            WHERE score >= 2
+            ORDER BY score DESC
             LIMIT $MAX_RESULTS
-            """.trimIndent(),
-            arrayOf(ftsQuery),
-        ).use { cursor ->
+        """.trimIndent()
+
+        db.rawQuery(sql, args.toTypedArray()).use { cursor ->
             val results = mutableListOf<String>()
             while (cursor.moveToNext()) {
                 val chunk = cursor.getString(0)
                 if (!chunk.isNullOrBlank()) results.add(chunk)
             }
-            Log.d(TAG, "FTS returned ${results.size} rag_chunks")
+            Log.d(TAG, "${results.size} rag_chunks retrieved (score >= 2)")
             return results
         }
     }
 
     /**
-     * Maps user-profile caste codes to the full tag labels used in schemes_fts.
-     * Returns null for "General" (no caste-based restriction needed).
+     * Maps user-profile caste codes to the full labels used in scheme_tags.
+     * Returns null for "General" — no caste filter applied.
      */
     private fun casteToTag(code: String): String? = when (code.trim().uppercase()) {
         "SC"  -> "Scheduled Caste"
         "ST"  -> "Scheduled Tribe"
         "OBC" -> "OBC"
-        else  -> null   // General or blank — no caste filter
-    }
-
-    /**
-     * Wraps a multi-word term in FTS5 double-quotes and strips characters
-     * that would break the MATCH expression (`"`, `*`, `(`, `)`).
-     */
-    private fun ftsQuote(term: String): String {
-        val clean = term.trim().replace(Regex("[\"*()]"), "")
-        return if (clean.contains(' ')) "\"$clean\"" else clean
+        else  -> null
     }
 }
