@@ -96,10 +96,10 @@ object SchemeRepository {
         if (occupation.isNotBlank()) terms.add(ftsQuote(occupation))
         if (state.isNotBlank())      terms.add(ftsQuote(state))
 
-        // Caste — restrict to scheme_tags column to avoid false positives
-        // (e.g. bare "SC" matches many unrelated sentences)
+        // Caste — search as a full phrase ("Scheduled Caste") so it only matches
+        // schemes that explicitly name the category, not incidental "SC" abbreviations.
         val casteTag = casteToTag(casteCategory)
-        if (casteTag != null) terms.add("scheme_tags:${ftsQuote(casteTag)}")
+        if (casteTag != null) terms.add(ftsQuote(casteTag))
 
         // Extract ASCII keywords from the raw query (e.g. "pension", "ration")
         query.split(Regex("\\s+"))
@@ -119,11 +119,10 @@ object SchemeRepository {
             """
             SELECT s.rag_chunk
             FROM schemes_fts fts
-            JOIN schemes s ON s.rowid = fts.rowid
+            JOIN schemes s ON s.rowid = fts.docid
             WHERE schemes_fts MATCH ?
               AND s.rag_chunk IS NOT NULL
               AND s.rag_chunk != ''
-            ORDER BY rank
             LIMIT $MAX_RESULTS
             """.trimIndent(),
             arrayOf(ftsQuery),
