@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.haq.app.data.ProfileManager
+import com.haq.app.data.SchemeRepository
 import com.haq.app.data.SessionManager
 import com.haq.app.data.UserProfile
 import com.haq.app.inference.DownloadState
@@ -312,6 +313,28 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 else -> "Hindi"
             }
 
+            // ── RAG: fetch relevant scheme context from schemes.db ────────────
+            // Uses FTS5 BM25 search keyed on profile fields (occupation, state,
+            // caste) — reliable English terms even when the user query is in
+            // another language. Falls back silently to empty if the DB is missing.
+            val ragChunks = activeProfile?.takeIf { it.isOnboarded }?.let { p ->
+                SchemeRepository.search(
+                    context   = getApplication(),
+                    query     = prompt,
+                    state     = p.state,
+                    casteCategory = p.casteCategory,
+                    occupation    = p.occupation,
+                )
+            } ?: emptyList()
+
+            val ragContext = if (ragChunks.isNotEmpty()) {
+                "\nRelevant government schemes:\n" +
+                ragChunks.joinToString("\n---\n") +
+                "\n"
+            } else ""
+
+            Log.d("Haq/RAG", "${ragChunks.size} chunks injected (${ragContext.length} chars)")
+
             // Build two queries: one with last-exchange history, one without.
             // The fallback is used if the first attempt fails before emitting
             // any tokens — the signature of a KV cache overflow during prefill.
@@ -324,6 +347,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     append("Category: ${p.casteCategory}, ")
                     append("Occupation: ${p.occupation}. ")
                 }
+                if (ragContext.isNotEmpty()) append(ragContext)
                 append("Question: $prompt")
             }
 
@@ -332,11 +356,14 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
 
             val contextualQuery = if (hasHistory) {
                 val p = activeProfile!!
+                // Include ragContext in fixedText so historyCharBudget() deducts
+                // its token cost and doesn't let history overflow the KV cache.
                 val fixedText = buildString {
                     append("IMPORTANT: Respond ONLY in $languageName. ")
                     append("Do not use any other language. ")
                     append("User: ${p.name}, State: ${p.state}, ")
                     append("Category: ${p.casteCategory}, Occupation: ${p.occupation}. ")
+                    if (ragContext.isNotEmpty()) append(ragContext)
                     append("Previous question: ${p.lastQuery} Previous answer:  ")
                     append("Question: $prompt")
                 }
@@ -352,6 +379,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     append("Do not use any other language. ")
                     append("User: ${p.name}, State: ${p.state}, ")
                     append("Category: ${p.casteCategory}, Occupation: ${p.occupation}. ")
+                    if (ragContext.isNotEmpty()) append(ragContext)
                     append("Previous question: ${p.lastQuery} ")
                     append("Previous answer: $prevResponse ")
                     append("Question: $prompt")
