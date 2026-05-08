@@ -74,6 +74,12 @@ object SchemeRepository {
      *
      * Search terms are derived from the user's English profile fields because
      * the scheme data is in English and FTS5 can't match cross-language.
+     *
+     * Caste codes ("SC", "ST", "OBC") are mapped to their full tag labels
+     * ("Scheduled Caste", "Scheduled Tribe", "OBC") and searched with a
+     * column-restriction to scheme_tags so they don't match incidental
+     * occurrences of "SC" inside other words or sentences.
+     *
      * A simple keyword pass over the raw [query] string also extracts any
      * ASCII words longer than 3 chars (handles "pension", "ration", etc.).
      */
@@ -86,11 +92,14 @@ object SchemeRepository {
     ): List<String> {
         val terms = mutableListOf<String>()
 
-        // Profile fields — always reliable English terms
+        // Occupation and state — general FTS across all columns
         if (occupation.isNotBlank()) terms.add(ftsQuote(occupation))
         if (state.isNotBlank())      terms.add(ftsQuote(state))
-        if (casteCategory.isNotBlank() && casteCategory != "General")
-            terms.add(ftsQuote(casteCategory))
+
+        // Caste — restrict to scheme_tags column to avoid false positives
+        // (e.g. bare "SC" matches many unrelated sentences)
+        val casteTag = casteToTag(casteCategory)
+        if (casteTag != null) terms.add("scheme_tags:${ftsQuote(casteTag)}")
 
         // Extract ASCII keywords from the raw query (e.g. "pension", "ration")
         query.split(Regex("\\s+"))
@@ -127,6 +136,17 @@ object SchemeRepository {
             Log.d(TAG, "FTS returned ${results.size} rag_chunks")
             return results
         }
+    }
+
+    /**
+     * Maps user-profile caste codes to the full tag labels used in schemes_fts.
+     * Returns null for "General" (no caste-based restriction needed).
+     */
+    private fun casteToTag(code: String): String? = when (code.trim().uppercase()) {
+        "SC"  -> "Scheduled Caste"
+        "ST"  -> "Scheduled Tribe"
+        "OBC" -> "OBC"
+        else  -> null   // General or blank — no caste filter
     }
 
     /**
