@@ -96,24 +96,30 @@ object SchemeRepository {
     ): List<String> {
         val args = mutableListOf<String>()
 
-        // ── Caste score (+4) ──────────────────────────────────────────────────
+        // ── Caste score (+3) ──────────────────────────────────────────────────
+        // Deliberately lower than state (+5) so a Rajasthan-specific scheme
+        // beats a generic Central OBC scheme when the user is in Rajasthan.
         val casteLabel = casteToTag(casteCategory)
         val casteSql = if (casteLabel != null) {
             args.add("%$casteLabel%")
-            "CASE WHEN scheme_tags LIKE ? THEN 4 ELSE 0 END"
+            "CASE WHEN scheme_tags LIKE ? THEN 3 ELSE 0 END"
         } else "0"
 
-        // ── State score (+3 state match, +1 central) ──────────────────────────
+        // ── State score (+5 state match, +2 central) ──────────────────────────
+        // State is the strongest signal — a Rajasthan scheme for any category
+        // is more relevant than a Central OBC scheme.
         val stateSql = if (state.isNotBlank()) {
             args.add("%${state.trim()}%")
-            "CASE WHEN state LIKE ? THEN 3 WHEN level = 'Central' THEN 1 ELSE 0 END"
-        } else "CASE WHEN level = 'Central' THEN 1 ELSE 0 END"
+            "CASE WHEN state LIKE ? THEN 5 WHEN level = 'Central' THEN 2 ELSE 0 END"
+        } else "CASE WHEN level = 'Central' THEN 2 ELSE 0 END"
 
-        // ── Occupation score (+2 per keyword found in scheme_tags or eligibility)
+        // ── Occupation score (+2 per keyword in scheme_tags or eligibility) ─────
+        // Only use ASCII words — occupation may be stored in the user's language
+        // (Hindi, Telugu etc.) which won't match English scheme data.
         val occWords = occupation
             .split(Regex("\\s+"))
             .map { it.trim() }
-            .filter { it.length > 3 }
+            .filter { it.length > 4 && it.all { c -> c.code < 0x0080 } }
             .distinct()
 
         val occParts = occWords.map { word ->
@@ -123,9 +129,26 @@ object SchemeRepository {
         }
         val occSql = if (occParts.isNotEmpty()) occParts.joinToString(" + ") else "0"
 
-        val scoreSql = "($casteSql + $stateSql + $occSql)"
+        // ── Query keyword score (+1 per intent word from the user's question) ──
+        // Catches words like "pension", "widow", "loan" directly from what the
+        // user asked — useful when occupation is stored in a non-English script.
+        val queryWords = query
+            .split(Regex("\\s+"))
+            .map { it.replace(Regex("[^A-Za-z]"), "").trim() }
+            .filter { it.length > 5 && it.all { c -> c.code < 0x0080 } }
+            .distinct()
+            .take(5)
 
-        Log.d(TAG, "Scoring: caste=$casteLabel state=$state occWords=$occWords")
+        val queryParts = queryWords.map { word ->
+            args.add("%$word%")
+            args.add("%$word%")
+            "CASE WHEN scheme_tags LIKE ? OR eligibility LIKE ? THEN 1 ELSE 0 END"
+        }
+        val querySql = if (queryParts.isNotEmpty()) queryParts.joinToString(" + ") else "0"
+
+        val scoreSql = "($casteSql + $stateSql + $occSql + $querySql)"
+
+        Log.d(TAG, "Scoring: caste=$casteLabel state=$state occWords=$occWords queryWords=$queryWords")
 
         val sql = """
             SELECT rag_chunk

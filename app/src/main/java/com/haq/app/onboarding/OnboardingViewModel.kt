@@ -602,9 +602,9 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 "Output exactly one of: SC, ST, OBC, General. Nothing else."
 
             is OnboardingStep.AskOccupation ->
-                "TASK: Extract the occupation from their reply.\n" +
+                "TASK: Extract the occupation from their reply and translate it to English.\n" +
                 "Reply: \"$transcript\"\n" +
-                "Output the job or occupation only. Nothing else."
+                "Output the occupation in English only. Nothing else. Examples: farmer, construction worker, teacher, daily wage labourer, weaver."
 
             else -> return transcript
         }
