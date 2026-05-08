@@ -186,6 +186,7 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
             "application and explain briefly why they matter. Close every response " +
             "with the relevant helpline number. If you do not know something, say " +
             "so plainly — never invent a scheme or suggest the user needs a " +
-            "middleman or paid agent."
+            "middleman or paid agent. Draw on your knowledge of existing Indian " +
+            "government schemes (central and state) when answering."
     }
 }
