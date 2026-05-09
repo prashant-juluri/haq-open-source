@@ -187,7 +187,10 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
             "why each matters. Close every response with the relevant helpline " +
             "number or authority to approach. If you do not know something, say " +
             "so plainly — never invent a scheme or law, and never suggest the " +
-            "user needs a middleman or paid agent. Draw on your knowledge of " +
-            "Indian government schemes and laws when answering."
+            "user needs a middleman or paid agent. If critical demographic " +
+            "information is missing (such as state, caste category, income, or " +
+            "occupation) and you need it to give an accurate answer, ask the " +
+            "user for that specific detail before proceeding. Draw on your " +
+            "knowledge of Indian government schemes and laws when answering."
     }
 }

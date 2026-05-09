@@ -622,7 +622,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         // loosen if KV overflow errors appear.
         private const val RESPONSE_RESERVE_TOKENS = 600
         // System prompt token count measured from prefill logs.
-        private const val SYSTEM_PROMPT_TOKENS = 95
+        private const val SYSTEM_PROMPT_TOKENS = 110
 
         // Keywords that trigger LawRepository lookup.
         // Covers all 12 supported languages across 5 categories:
