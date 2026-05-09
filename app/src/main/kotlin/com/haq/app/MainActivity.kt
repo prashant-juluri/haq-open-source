@@ -547,6 +547,7 @@ private fun ConversationOnboardingScreen(
         is OnboardingStep.Introduction   -> vm.getIntroductionText(lang)
         is OnboardingStep.AskName        -> "…"
         is OnboardingStep.AskState       -> vm.getAskStateText(lang)
+        is OnboardingStep.AskDistrict    -> vm.getAskDistrictText(lang)
         is OnboardingStep.AskCaste       -> vm.getAskCasteText(lang)
         is OnboardingStep.AskOccupation  -> vm.getAskOccupationText(lang)
         is OnboardingStep.Complete       -> vm.getCompletionText(lang)

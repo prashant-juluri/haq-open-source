@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.haq.app.data.ProfileManager
 import com.haq.app.data.LawRepository
+import com.haq.app.data.OfficeRepository
 import com.haq.app.data.SchemeRepository
 import com.haq.app.data.SessionManager
 import com.haq.app.data.UserProfile
@@ -78,6 +79,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             SchemeRepository.preload(getApplication())
             LawRepository.preload(getApplication())
+            OfficeRepository.preload(getApplication())
         }
 
         viewModelScope.launch {
@@ -342,6 +344,23 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 LawRepository.search(context = getApplication(), query = prompt)
             } else emptyList()
 
+            // ── RAG: fetch relevant government offices from offices.db ────────
+            // Only queried on legal/grievance queries; returns DLSA + Labour
+            // offices for the user's district (falls back to state if district
+            // is blank or has no match yet).
+            val officeChunks = activeProfile?.takeIf {
+                it.isOnboarded && hasLegalKeywords(prompt)
+            }?.let { p ->
+                val types = officeTypesForQuery(prompt)
+                if (types.isEmpty()) emptyList()
+                else OfficeRepository.search(
+                    context     = getApplication(),
+                    state       = p.state,
+                    district    = p.district,
+                    officeTypes = types,
+                )
+            } ?: emptyList()
+
             val ragContext = buildString {
                 if (ragChunks.isNotEmpty()) {
                     append("\nRelevant government schemes:\n")
@@ -353,9 +372,14 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     append(lawChunks.joinToString("\n---\n"))
                     append("\n")
                 }
+                if (officeChunks.isNotEmpty()) {
+                    append("\nNearby government offices:\n")
+                    append(officeChunks.joinToString("\n---\n"))
+                    append("\n")
+                }
             }
 
-            Log.d("Haq/RAG", "${ragChunks.size} scheme chunks + ${lawChunks.size} law chunks injected (${ragContext.length} chars)")
+            Log.d("Haq/RAG", "${ragChunks.size} scheme + ${lawChunks.size} law + ${officeChunks.size} office chunks injected (${ragContext.length} chars)")
 
             // Build two queries: one with last-exchange history, one without.
             // The fallback is used if the first attempt fails before emitting
@@ -366,6 +390,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 activeProfile?.takeIf { it.isOnboarded }?.let { p ->
                     append("User: ${p.name}, ")
                     append("State: ${p.state}, ")
+                    if (p.district.isNotBlank()) append("District: ${p.district}, ")
                     append("Category: ${p.casteCategory}, ")
                     append("Occupation: ${p.occupation}. ")
                 }
@@ -380,10 +405,11 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 val p = activeProfile!!
                 // Include ragContext in fixedText so historyCharBudget() deducts
                 // its token cost and doesn't let history overflow the KV cache.
+                val districtPart = if (p.district.isNotBlank()) "District: ${p.district}, " else ""
                 val fixedText = buildString {
                     append("IMPORTANT: Respond ONLY in $languageName. ")
                     append("Do not use any other language. ")
-                    append("User: ${p.name}, State: ${p.state}, ")
+                    append("User: ${p.name}, State: ${p.state}, ${districtPart}")
                     append("Category: ${p.casteCategory}, Occupation: ${p.occupation}. ")
                     if (ragContext.isNotEmpty()) append(ragContext)
                     append("Previous question: ${p.lastQuery} Previous answer:  ")
@@ -399,7 +425,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 buildString {
                     append("IMPORTANT: Respond ONLY in $languageName. ")
                     append("Do not use any other language. ")
-                    append("User: ${p.name}, State: ${p.state}, ")
+                    append("User: ${p.name}, State: ${p.state}, ${districtPart}")
                     append("Category: ${p.casteCategory}, Occupation: ${p.occupation}. ")
                     if (ragContext.isNotEmpty()) append(ragContext)
                     append("Previous question: ${p.lastQuery} ")
@@ -613,6 +639,34 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         val matched = LEGAL_KEYWORDS.firstOrNull { lower.contains(it) }
         Log.d("Haq/RAG", "hasLegalKeywords=${ matched != null } matched='$matched'")
         return matched != null
+    }
+
+    /**
+     * Returns the office types to query from offices.db based on the query content.
+     * DLSA is returned for all legal queries (free legal aid is always relevant).
+     * Labour is added when the query is employment/wage related.
+     * Returns empty list when no legal keywords are present (caller already gates on
+     * hasLegalKeywords, but this provides finer-grained type selection).
+     */
+    private fun officeTypesForQuery(query: String): List<String> {
+        val lower = query.lowercase()
+        val types = mutableListOf<String>()
+        // DLSA — always relevant when there's a legal or rights query
+        if (hasLegalKeywords(query)) types.add("DLSA")
+        // Labour office — add when the query involves employment/wages
+        val labourKeywords = setOf(
+            "wage", "wages", "salary", "employer", "employee", "labour", "labor",
+            "worker", "dismiss", "fired", "overtime", "maternity", "esi", "provident",
+            "वेतन", "मजदूरी", "नियोक्ता", "कर्मचारी", "श्रमिक", "बर्खास्त",
+            "వేతనం", "కూలి", "కార్మికుడు", "వేതనం", "ఉద్యోగి",
+            "വേതനം", "കൂലി", "തൊഴിലാളി", "ജോലി",
+            "ವೇತನ", "ಕೂಲಿ", "ಕಾರ್ಮಿಕ",
+            "ஊதியம்", "கூலி", "தொழிலாளர்",
+            "বেতন", "মজুরি", "শ্রমিক",
+            "वेतन", "मजुरी", "कामगार",
+        )
+        if (labourKeywords.any { lower.contains(it) }) types.add("Labour")
+        return types
     }
 
     companion object {

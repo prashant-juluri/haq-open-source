@@ -23,6 +23,7 @@ object ProfileManager {
         name: String,
         language: String,
         state: String,
+        district: String,
         casteCategory: String,
         occupation: String
     ): Int {
@@ -30,6 +31,7 @@ object ProfileManager {
             name = name,
             preferredLanguage = language,
             state = state,
+            district = district,
             casteCategory = casteCategory,
             occupation = occupation,
             isOnboarded = true
