@@ -345,12 +345,10 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             } else emptyList()
 
             // ── RAG: fetch relevant government offices from offices.db ────────
-            // Only queried on legal/grievance queries; returns DLSA + Labour
-            // offices for the user's district (falls back to state if district
-            // is blank or has no match yet).
-            val officeChunks = activeProfile?.takeIf {
-                it.isOnboarded && hasLegalKeywords(prompt)
-            }?.let { p ->
+            // Queried on any query where we can identify relevant office types.
+            // Returns up to MAX_RESULTS office RAG chunks for the user's district
+            // (falls back to state if district is blank or has no match).
+            val officeChunks = activeProfile?.takeIf { it.isOnboarded }?.let { p ->
                 val types = officeTypesForQuery(prompt)
                 if (types.isEmpty()) emptyList()
                 else OfficeRepository.search(
@@ -642,30 +640,106 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Returns the office types to query from offices.db based on the query content.
-     * DLSA is returned for all legal queries (free legal aid is always relevant).
-     * Labour is added when the query is employment/wage related.
-     * Returns empty list when no legal keywords are present (caller already gates on
-     * hasLegalKeywords, but this provides finer-grained type selection).
+     * Returns office types to query from offices.db based on the query content.
+     * Multiple types may be returned; OfficeRepository searches with OR across all.
+     * Types: DLSA, LABOUR, AGRI, DCDRC, SW, COLLECTOR, PMKISAN, INSOMBU, NCSC.
+     * Returns empty list only when the query has no recognisable scheme/rights topic.
      */
     private fun officeTypesForQuery(query: String): List<String> {
         val lower = query.lowercase()
         val types = mutableListOf<String>()
-        // DLSA — always relevant when there's a legal or rights query
+
+        // DLSA — free legal aid, always relevant for legal/rights queries
         if (hasLegalKeywords(query)) types.add("DLSA")
-        // Labour office — add when the query involves employment/wages
-        val labourKeywords = setOf(
+
+        // LABOUR — employment, wages, MNREGA, bonded labour
+        val labourKw = setOf(
             "wage", "wages", "salary", "employer", "employee", "labour", "labor",
             "worker", "dismiss", "fired", "overtime", "maternity", "esi", "provident",
-            "वेतन", "मजदूरी", "नियोक्ता", "कर्मचारी", "श्रमिक", "बर्खास्त",
-            "వేతనం", "కూలి", "కార్మికుడు", "వేതనం", "ఉద్యోగి",
-            "വേതനം", "കൂലി", "തൊഴിലാളി", "ജോലി",
-            "ವೇತನ", "ಕೂಲಿ", "ಕಾರ್ಮಿಕ",
-            "ஊதியம்", "கூலி", "தொழிலாளர்",
-            "বেতন", "মজুরি", "শ্রমিক",
-            "वेतन", "मजुरी", "कामगार",
+            "mnrega", "mgnrega", "job card", "nrega",
+            "वेतन", "मजदूरी", "श्रमिक", "मनरेगा", "नरेगा",
+            "వేతనం", "కూలి", "కార్మికుడు", "మనరేగా",
+            "വേതനം", "കൂലി", "തൊഴിലാളി", "മനരേഗ",
+            "ವೇತನ", "ಕೂಲಿ", "ಕಾರ್ಮಿಕ", "ಮನರೇಗ",
+            "ஊதியம்", "கூலி", "தொழிலாளர்", "மனரேகா",
         )
-        if (labourKeywords.any { lower.contains(it) }) types.add("Labour")
+        if (labourKw.any { lower.contains(it) }) types.add("LABOUR")
+
+        // AGRI — crop insurance, PM-KISAN, Kisan Credit Card, agriculture
+        val agriKw = setOf(
+            "crop", "farmer", "agriculture", "kisan", "pmfby", "pm-kisan", "pm kisan",
+            "kcc", "kisan credit", "fasal bima", "crop loss",
+            "किसान", "फसल", "कृषि", "फसल बीमा", "पीएम किसान",
+            "రైతు", "పంట", "వ్యవసాయం", "పంట బీమా",
+            "കർഷകൻ", "വിള", "കൃഷി", "വിള ഇൻഷുറൻസ്",
+            "ರೈತ", "ಬೆಳೆ", "ಕೃಷಿ", "ಬೆಳೆ ವಿಮೆ",
+            "விவசாயி", "பயிர்", "விவசாயம்", "பயிர் காப்பீடு",
+        )
+        if (agriKw.any { lower.contains(it) }) types.add("AGRI")
+
+        // DCDRC — consumer complaints, ration denial, insurance rejection
+        val consumerKw = setOf(
+            "consumer", "complaint", "ration", "ration card", "pds", "fair price",
+            "insurance claim", "claim rejected", "overcharged", "cheated", "fraud",
+            "refund", "deficiency", "consumer forum", "consumer court",
+            "उपभोक्ता", "शिकायत", "राशन", "राशन कार्ड", "बीमा दावा",
+            "వినియోగదారు", "ఫిర్యాదు", "రేషన్", "బీమా క్లెయిమ్",
+            "ഉപഭോക്താ", "പരാതി", "റേഷൻ", "ഇൻഷുറൻസ് ക്ലെയിം",
+            "ಗ್ರಾಹಕ", "ದೂರು", "ರೇಷನ್", "ವಿಮಾ ಹಕ್ಕು",
+            "நுகர்வோர்", "புகார்", "ரேஷன்", "காப்பீட்டு கோரிக்கை",
+        )
+        if (consumerKw.any { lower.contains(it) }) types.add("DCDRC")
+
+        // SW — SC/ST welfare, pensions, scholarships
+        val swKw = setOf(
+            "pension", "scholarship", "dalit", "tribal", "social welfare",
+            "widow", "disability", "handicap", "backward class",
+            "ignoaps", "igndps", "ignwps", "nfbs", "nsap",
+            "पेंशन", "छात्रवृत्ति", "विकलांग", "विधवा",
+            "పెన్షన్", "స్కాలర్‌షిప్", "వికలాంగ",
+            "പെൻഷൻ", "സ്കോളർഷിപ്പ്", "ഭിന്നശേഷി", "വിധവ",
+            "ಪಿಂಚಣಿ", "ವಿಕಲಚೇತನ", "ವಿಧವೆ",
+            "ஓய்வூதியம்", "உதவித்தொகை", "மாற்றுத்திறனாளி",
+        )
+        if (swKw.any { lower.contains(it) }) types.add("SW")
+
+        // COLLECTOR — grievances, certificates, land records
+        val collectorKw = setOf(
+            "collector", "district magistrate", "grievance", "caste certificate",
+            "income certificate", "domicile", "land record", "revenue", "tehsildar",
+            "जाति प्रमाण", "आय प्रमाण", "भूमि",
+            "కులం సర్టిఫికేట్", "భూమి రికార్డు",
+            "ജാതി സർട്ടിഫിക്കറ്റ്",
+            "ಜಾತಿ ಪ್ರಮಾಣಪತ್ರ",
+            "சாதி சான்றிதழ்",
+        )
+        if (collectorKw.any { lower.contains(it) }) types.add("COLLECTOR")
+
+        // PMKISAN — PM-KISAN nodal officer
+        val pmkisanKw = setOf(
+            "pm-kisan", "pm kisan", "pmkisan", "kisan instalment", "kisan installment",
+            "kisan payment", "kisan samman",
+            "पीएम किसान", "किसान सम्मान", "किसान क़िस्त",
+            "పీఎం కిసాన్", "కిసాన్ సమ్మాన్",
+        )
+        if (pmkisanKw.any { lower.contains(it) }) types.add("PMKISAN")
+
+        // INSOMBU — insurance ombudsman for escalated insurance disputes
+        val ombuKw = setOf(
+            "insurance ombudsman", "irdai", "claim settlement", "insurance dispute",
+            "rejected claim",
+            "बीमा लोकपाल", "బీమా లోక్‌పాల్",
+        )
+        if (ombuKw.any { lower.contains(it) }) types.add("INSOMBU")
+
+        // NCSC — SC/ST commission for atrocity/discrimination
+        val ncscKw = setOf(
+            "atrocity", "discrimination", "ncsc", "sc/st commission", "untouchability",
+            "अत्याचार", "भेदभाव",
+            "అఘాయిత్యం", "వివక్ష",
+        )
+        if (ncscKw.any { lower.contains(it) }) types.add("NCSC")
+
         return types
     }
 
