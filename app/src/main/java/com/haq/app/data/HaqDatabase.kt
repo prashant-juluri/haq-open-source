@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [UserProfile::class], version = 2)
+@Database(entities = [UserProfile::class], version = 3)
 abstract class HaqDatabase : RoomDatabase() {
     abstract fun userProfileDao(): UserProfileDao
 
@@ -29,6 +29,15 @@ abstract class HaqDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds district column introduced in v3. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE user_profiles ADD COLUMN district TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
         fun getInstance(context: Context): HaqDatabase =
             INSTANCE ?: synchronized(this) {
                 Room.databaseBuilder(
@@ -36,7 +45,7 @@ abstract class HaqDatabase : RoomDatabase() {
                     HaqDatabase::class.java,
                     "haq_database"
                 )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
                 .also { INSTANCE = it }
             }

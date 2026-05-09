@@ -24,6 +24,7 @@ sealed class OnboardingStep {
     object Introduction          : OnboardingStep()
     object AskName               : OnboardingStep()
     object AskState              : OnboardingStep()
+    object AskDistrict           : OnboardingStep()
     object AskCaste              : OnboardingStep()
     object AskOccupation         : OnboardingStep()
     object InstallingVoicePacks  : OnboardingStep()  // edge case: single language still missing
@@ -72,6 +73,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     var selectedLanguage    = "hi"
     var collectedName       = ""
     var collectedState      = ""
+    var collectedDistrict   = ""
     var collectedCaste      = ""
     var collectedOccupation = ""
 
@@ -147,6 +149,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         is OnboardingStep.Introduction,
                         is OnboardingStep.AskName       -> getIntroductionText(selectedLanguage)
                         is OnboardingStep.AskState      -> getAskStateText(selectedLanguage)
+                        is OnboardingStep.AskDistrict   -> getAskDistrictText(selectedLanguage)
                         is OnboardingStep.AskCaste      -> getAskCasteText(selectedLanguage)
                         is OnboardingStep.AskOccupation -> getAskOccupationText(selectedLanguage)
                         else                            -> null
@@ -298,6 +301,21 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         "ne" -> "$collectedName, तपाईं कुन राज्यमा बस्नुहुन्छ?"
         "en" -> "$collectedName, which state do you live in?"
         else -> "$collectedName, आप किस राज्य में रहते हैं?"
+    }
+
+    fun getAskDistrictText(language: String): String = when (language) {
+        "te" -> "మీరు $collectedState లో ఏ జిల్లాలో ఉన్నారు?"
+        "ml" -> "നിങ്ങൾ $collectedState ലെ ഏത് ജില്ലയിലാണ്?"
+        "kn" -> "ನೀವು $collectedState ನಲ್ಲಿ ಯಾವ ಜಿಲ್ಲೆಯಲ್ಲಿ ಇದ್ದೀರಿ?"
+        "ta" -> "நீங்கள் $collectedState இல் எந்த மாவட்டத்தில் இருக்கிறீர்கள்?"
+        "bn" -> "আপনি $collectedState এ কোন জেলায় থাকেন?"
+        "gu" -> "તમે $collectedState માં કયા જિલ્લામાં રહો છો?"
+        "mr" -> "तुम्ही $collectedState मध्ये कोणत्या जिल्ह्यात राहता?"
+        "or" -> "ଆପଣ $collectedState ରେ କେଉଁ ଜିଲ୍ଲାରେ ଅଛନ୍ତି?"
+        "as" -> "আপোনি $collectedState ত কোন জিলাত থাকে?"
+        "ne" -> "तपाईं $collectedState मा कुन जिल्लामा हुनुहुन्छ?"
+        "en" -> "Which district in $collectedState do you live in?"
+        else -> "आप $collectedState में किस जिले में रहते हैं?"
     }
 
     fun getAskCasteText(language: String): String = when (language) {
@@ -464,6 +482,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     private fun startNextQuestion() {
         val questionText = when (_step.value) {
             is OnboardingStep.AskState      -> getAskStateText(selectedLanguage)
+            is OnboardingStep.AskDistrict   -> getAskDistrictText(selectedLanguage)
             is OnboardingStep.AskCaste      -> getAskCasteText(selectedLanguage)
             is OnboardingStep.AskOccupation -> getAskOccupationText(selectedLanguage)
             else -> return
@@ -539,6 +558,13 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     fun submitState(state: String) {
         if (state.isBlank()) return
         collectedState = state.trim()
+        _step.value = OnboardingStep.AskDistrict
+        startNextQuestion()
+    }
+
+    fun submitDistrict(district: String) {
+        if (district.isBlank()) return
+        collectedDistrict = district.trim()
         _step.value = OnboardingStep.AskCaste
         startNextQuestion()
     }
@@ -571,6 +597,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         when (step) {
             is OnboardingStep.AskName       -> submitName(extracted)
             is OnboardingStep.AskState      -> submitState(extracted)
+            is OnboardingStep.AskDistrict   -> submitDistrict(extracted)
             is OnboardingStep.AskCaste      -> submitCaste(extracted)
             is OnboardingStep.AskOccupation -> submitOccupation(extracted)
             else -> {}
@@ -588,6 +615,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         when (step) {
             is OnboardingStep.AskName       -> extractName(transcript)
             is OnboardingStep.AskState      -> extractState(transcript)
+            is OnboardingStep.AskDistrict   -> extractDistrict(transcript)
             is OnboardingStep.AskCaste      -> extractCaste(transcript)
             is OnboardingStep.AskOccupation -> extractOccupationViaGemma(transcript)
             else                            -> transcript
@@ -627,6 +655,24 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             ?: transcript.trim()
 
         Log.d("Haq/Onboarding", "extractState: '$transcript' → '$result'")
+        return result
+    }
+
+    /**
+     * Strips location filler phrases and returns a title-cased district name.
+     * District names are not validated against a fixed list — there are 780+
+     * districts and the user's STT transcription is taken at face value.
+     */
+    private fun extractDistrict(transcript: String): String {
+        val cleaned = transcript
+            .replace(Regex("(?i)\\b(i live in|i am from|my district is|district is|i am in|from|in the|in)\\b"), "")
+            .trim()
+        // Title-case each word so "nashik" → "Nashik"
+        val result = cleaned.split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+            .ifBlank { transcript.trim() }
+        Log.d("Haq/Onboarding", "extractDistrict: '$transcript' → '$result'")
         return result
     }
 
@@ -759,6 +805,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 name          = collectedName,
                 language      = selectedLanguage,
                 state         = collectedState,
+                district      = collectedDistrict,
                 casteCategory = collectedCaste,
                 occupation    = collectedOccupation,
             )

@@ -10,6 +10,7 @@ data class UserProfile(
     val name: String = "",
     val preferredLanguage: String = "hi", // hi, te, ml, kn, en
     val state: String = "",
+    val district: String = "",
     val casteCategory: String = "",       // SC, ST, OBC, General
     val occupation: String = "",
     val isOnboarded: Boolean = false,
