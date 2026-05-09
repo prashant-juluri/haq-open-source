@@ -24,6 +24,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -762,10 +763,17 @@ private fun MainAppContent(
         }
 
         // ── Response area — fills available space ─────────────────────────────
-        ResponseCard(
-            text = responseText,
-            modifier = Modifier.weight(1f),
-        )
+        // Show animated thinking dots while Gemma is prefilling (THINKING but
+        // no tokens have arrived yet). Once tokens start streaming, switch to
+        // the normal ResponseCard so content appears immediately.
+        if (appState == AppState.THINKING && responseText.isEmpty()) {
+            ThinkingIndicator(modifier = Modifier.weight(1f))
+        } else {
+            ResponseCard(
+                text = responseText,
+                modifier = Modifier.weight(1f),
+            )
+        }
 
         Spacer(Modifier.height(16.dp))
 
@@ -921,6 +929,70 @@ private fun ProfileSwitcherSheet(
 }
 
 // ── Response card ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun ThinkingIndicator(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "thinking")
+
+    // Three dots with staggered alpha — each dot leads the next by 200 ms.
+    val dot1 by transition.animateFloat(
+        initialValue = 0f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 900
+                0.25f at 0
+                1.00f at 300
+                0.25f at 600
+            },
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "dot1",
+    )
+    val dot2 by transition.animateFloat(
+        initialValue = 0f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 900
+                0.25f at 0
+                0.25f at 200
+                1.00f at 500
+                0.25f at 800
+            },
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "dot2",
+    )
+    val dot3 by transition.animateFloat(
+        initialValue = 0f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 900
+                0.25f at 0
+                0.25f at 400
+                1.00f at 700
+                0.25f at 900
+            },
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "dot3",
+    )
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(10.dp).background(HaqGreen.copy(alpha = dot1), CircleShape))
+                Box(Modifier.size(10.dp).background(HaqGreen.copy(alpha = dot2), CircleShape))
+                Box(Modifier.size(10.dp).background(HaqGreen.copy(alpha = dot3), CircleShape))
+            }
+        }
+    }
+}
 
 @Composable
 private fun ResponseCard(text: String, modifier: Modifier = Modifier) {
