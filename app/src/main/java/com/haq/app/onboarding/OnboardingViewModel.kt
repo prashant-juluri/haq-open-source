@@ -578,37 +578,160 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
-     * Builds a terse extraction prompt for [step] and runs it through Gemma.
-     * The prompt is placed entirely in the user turn — the system prompt is not
-     * changed — so Gemma sees the task instructions as an explicit override.
-     * Returns [transcript] unchanged if the engine is not ready or extraction fails.
+     * Extracts a structured value from a natural-language transcript.
+     *
+     * Name, state, and caste use fast regex/lookup — no model call, no latency.
+     * Occupation still calls Gemma because it needs translation (Hindi→English)
+     * and normalisation across hundreds of job titles.
      */
-    private suspend fun extractForStep(step: OnboardingStep, transcript: String): String {
-        if (!GemmaManager.isModelReady()) return transcript
-        val prompt = when (step) {
-            is OnboardingStep.AskName ->
-                "TASK: Extract the person's name from their reply.\n" +
-                "Reply: \"$transcript\"\n" +
-                "Output the name only. Nothing else."
-
-            is OnboardingStep.AskState ->
-                "TASK: Extract the Indian state name from their reply.\n" +
-                "Reply: \"$transcript\"\n" +
-                "Output the state name only. Nothing else."
-
-            is OnboardingStep.AskCaste ->
-                "TASK: Identify the caste category from their reply.\n" +
-                "Reply: \"$transcript\"\n" +
-                "Output exactly one of: SC, ST, OBC, General. Nothing else."
-
-            is OnboardingStep.AskOccupation ->
-                "TASK: Extract the occupation from their reply and translate it to English.\n" +
-                "Reply: \"$transcript\"\n" +
-                "Output the occupation in English only. Nothing else. Examples: farmer, construction worker, teacher, daily wage labourer, weaver."
-
-            else -> return transcript
+    private suspend fun extractForStep(step: OnboardingStep, transcript: String): String =
+        when (step) {
+            is OnboardingStep.AskName       -> extractName(transcript)
+            is OnboardingStep.AskState      -> extractState(transcript)
+            is OnboardingStep.AskCaste      -> extractCaste(transcript)
+            is OnboardingStep.AskOccupation -> extractOccupationViaGemma(transcript)
+            else                            -> transcript
         }
+
+    /**
+     * Strips filler phrases ("my name is", "I am", "call me") then returns the
+     * first sequence of capitalised or title-case words.  Falls back to the
+     * first word of the transcript if nothing capitalised is found.
+     */
+    private fun extractName(transcript: String): String {
+        val cleaned = transcript
+            .replace(Regex("(?i)\\b(my name is|i am|i'm|call me|this is|it's|its)\\b"), "")
+            .trim()
+
+        // Grab consecutive Title-Case or ALL-CAPS words (handles "SUNITA", "Sunita Devi")
+        val nameMatch = Regex("[A-Z][a-z]+(\\s+[A-Z][a-z]+)*|[A-Z]{2,}").find(cleaned)
+        val result = nameMatch?.value?.trim()
+            ?: cleaned.split(Regex("\\s+")).firstOrNull { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+            ?: transcript.trim()
+
+        Log.d("Haq/Onboarding", "extractName: '$transcript' → '$result'")
+        return result
+    }
+
+    /**
+     * Scans the transcript for any known Indian state or UT name.
+     * Matching is case-insensitive and handles common spoken variants
+     * ("MP" → "Madhya Pradesh", "UP" → "Uttar Pradesh", etc.).
+     * Falls back to the raw transcript if no state is found.
+     */
+    private fun extractState(transcript: String): String {
+        val lower = transcript.lowercase()
+        val result = STATE_ALIASES.entries
+            .firstOrNull { (alias, _) -> lower.contains(alias) }
+            ?.value
+            ?: transcript.trim()
+
+        Log.d("Haq/Onboarding", "extractState: '$transcript' → '$result'")
+        return result
+    }
+
+    /**
+     * Maps spoken caste answers to the four canonical codes used in schemes.db.
+     * Handles English and common Hindi/transliterated terms.
+     * Defaults to "General" when nothing matches.
+     */
+    private fun extractCaste(transcript: String): String {
+        val lower = transcript.lowercase()
+        val result = when {
+            lower.contains("schedule") && lower.contains("tribe") -> "ST"
+            lower.contains("schedule") && lower.contains("caste") -> "SC"
+            Regex("\\bst\\b").containsMatchIn(lower)              -> "ST"
+            Regex("\\bsc\\b").containsMatchIn(lower)              -> "SC"
+            lower.contains("obc") || lower.contains("other backward") ||
+                lower.contains("पिछड़")                           -> "OBC"
+            lower.contains("general") || lower.contains("open") ||
+                lower.contains("unreserved") || lower.contains("forward") ||
+                lower.contains("सामान्य")                        -> "General"
+            lower.contains("adivasi") || lower.contains("tribal") ||
+                lower.contains("आदिवासी")                        -> "ST"
+            lower.contains("dalit") || lower.contains("हरिजन")   -> "SC"
+            else                                                   -> "General"
+        }
+        Log.d("Haq/Onboarding", "extractCaste: '$transcript' → '$result'")
+        return result
+    }
+
+    /**
+     * Calls Gemma to translate and normalise the occupation into English.
+     * This is the only field that still uses the model — it handles the long
+     * tail of job titles across all supported languages.
+     */
+    private suspend fun extractOccupationViaGemma(transcript: String): String {
+        if (!GemmaManager.isModelReady()) return transcript
+        val prompt =
+            "TASK: Extract the occupation from their reply and translate it to English.\n" +
+            "Reply: \"$transcript\"\n" +
+            "Output the occupation in English only. Nothing else. " +
+            "Examples: farmer, construction worker, teacher, daily wage labourer, weaver."
         return GemmaManager.extractField(prompt, fallback = transcript)
+    }
+
+    companion object {
+        /**
+         * State name lookup: alias (lowercase, as spoken) → canonical name.
+         * Covers all 28 states + 8 UTs plus common abbreviations and alternate spellings.
+         */
+        private val STATE_ALIASES: Map<String, String> = mapOf(
+            // Abbreviations
+            "andhra"         to "Andhra Pradesh",
+            "ap"             to "Andhra Pradesh",
+            "arunachal"      to "Arunachal Pradesh",
+            "assam"          to "Assam",
+            "bihar"          to "Bihar",
+            "chhattisgarh"   to "Chhattisgarh",
+            "goa"            to "Goa",
+            "gujarat"        to "Gujarat",
+            "haryana"        to "Haryana",
+            "himachal"       to "Himachal Pradesh",
+            "hp"             to "Himachal Pradesh",
+            "jharkhand"      to "Jharkhand",
+            "karnataka"      to "Karnataka",
+            "kerala"         to "Kerala",
+            "madhya pradesh" to "Madhya Pradesh",
+            "mp"             to "Madhya Pradesh",
+            "maharashtra"    to "Maharashtra",
+            "manipur"        to "Manipur",
+            "meghalaya"      to "Meghalaya",
+            "mizoram"        to "Mizoram",
+            "nagaland"       to "Nagaland",
+            "odisha"         to "Odisha",
+            "orissa"         to "Odisha",
+            "punjab"         to "Punjab",
+            "rajasthan"      to "Rajasthan",
+            "sikkim"         to "Sikkim",
+            "tamil nadu"     to "Tamil Nadu",
+            "tamilnadu"      to "Tamil Nadu",
+            "tn"             to "Tamil Nadu",
+            "telangana"      to "Telangana",
+            "tripura"        to "Tripura",
+            "uttar pradesh"  to "Uttar Pradesh",
+            "up"             to "Uttar Pradesh",
+            "uttarakhand"    to "Uttarakhand",
+            "uttaranchal"    to "Uttarakhand",
+            "west bengal"    to "West Bengal",
+            "bengal"         to "West Bengal",
+            "wb"             to "West Bengal",
+            // Union Territories
+            "delhi"          to "Delhi",
+            "jammu"          to "Jammu and Kashmir",
+            "kashmir"        to "Jammu and Kashmir",
+            "jk"             to "Jammu and Kashmir",
+            "ladakh"         to "Ladakh",
+            "chandigarh"     to "Chandigarh",
+            "puducherry"     to "Puducherry",
+            "pondicherry"    to "Puducherry",
+            "lakshadweep"    to "Lakshadweep",
+            "andaman"        to "Andaman and Nicobar Islands",
+            "nicobar"        to "Andaman and Nicobar Islands",
+            "dadra"          to "Dadra and Nagar Haveli and Daman and Diu",
+            "daman"          to "Dadra and Nagar Haveli and Daman and Diu",
+            "diu"            to "Dadra and Nagar Haveli and Daman and Diu",
+        )
     }
 
     fun submitOccupation(occupation: String) {
