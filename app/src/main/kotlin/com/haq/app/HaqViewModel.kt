@@ -747,11 +747,17 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         val locationKw = setOf(
             "where", "address", "location", "directions", "how to reach", "how to go",
             "how do i get", "find the office", "office address", "office location",
-            "कहाँ", "कहां", "पता", "कार्यालय",
-            "ఎక్కడ", "చిరునామా", "కార్యాలయం",
-            "എവിടെ", "വിലാസം", "ഓഫീസ്",
-            "ಎಲ್ಲಿ", "ವಿಳಾಸ", "ಕಚೇರಿ",
-            "எங்கே", "முகவரி", "அலுவலகம்",
+            "कहाँ", "कहां", "पता", "कार्यालय",           // Hindi
+            "ఎక్కడ", "చిరునామా", "కార్యాలయం",            // Telugu
+            "എവിടെ", "വിലാസം", "ഓഫീസ്",                 // Malayalam
+            "ಎಲ್ಲಿ", "ವಿಳಾಸ", "ಕಚೇರಿ",                  // Kannada
+            "எங்கே", "முகவரி", "அலுவலகம்",               // Tamil
+            "কোথায়", "ঠিকানা", "অফিস",                   // Bengali
+            "ક્યાં", "સરનામું", "કચેરી",                  // Gujarati
+            "कुठे", "पत्ता", "कार्यालय",                   // Marathi
+            "କେଉଁଠି", "ଠିକଣା", "କାର୍ଯ୍ୟାଳୟ",             // Odia
+            "ক'ত", "ঠিকনা", "কাৰ্যালয়",                  // Assamese
+            "कहाँ", "ठेगाना", "कार्यालय",                  // Nepali
         )
         if (locationKw.any { lower.contains(it) }) {
             for (t in listOf("AGRI", "COLLECTOR", "DLSA", "LABOUR", "SW", "PMKISAN")) {
