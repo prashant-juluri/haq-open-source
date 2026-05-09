@@ -603,7 +603,9 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun hasLegalKeywords(query: String): Boolean {
         val lower = query.lowercase()
-        return LEGAL_KEYWORDS.any { lower.contains(it) }
+        val matched = LEGAL_KEYWORDS.firstOrNull { lower.contains(it) }
+        Log.d("Haq/RAG", "hasLegalKeywords=${ matched != null } matched='$matched'")
+        return matched != null
     }
 
     companion object {
@@ -617,12 +619,24 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
 
         // English keywords that signal a legal question — triggers LawRepository lookup.
         // Kept intentionally broad: better to do an extra DB scan than miss a rights question.
+        // Covers: statutory rights, employment/labour, criminal, property, family law.
         private val LEGAL_KEYWORDS = setOf(
+            // Statutory / rights
             "right", "rights", "law", "act", "section", "legal", "court",
+            "entitled", "liable", "tribunal", "appeal", "violation", "protection",
+            "under the", "according to", "remedy", "cognizable",
+            // Offences / enforcement
             "penalty", "offence", "offense", "punish", "fine", "jail", "arrest",
-            "compensation", "entitled", "liable", "tribunal", "appeal", "complaint",
-            "dispute", "violation", "protection", "under the", "according to",
-            "grievance", "remedy", "damages", "warrant", "cognizable",
+            "warrant", "complaint", "dispute", "grievance", "damages", "compensation",
+            // Labour / employment
+            "wage", "wages", "salary", "minimum wage", "employer", "employee",
+            "labour", "labor", "worker", "dismiss", "fired", "termination",
+            "overtime", "working hours", "provident fund", "esi", "maternity",
+            // Property / family
+            "evict", "eviction", "tenant", "landlord", "divorce", "custody",
+            "inheritance", "property", "dowry", "domestic violence",
+            // Consumer / other
+            "fraud", "cheat", "cheated", "bribe", "corruption", "ration",
         )
     }
 }
