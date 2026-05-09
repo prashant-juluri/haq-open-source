@@ -740,6 +740,25 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (ncscKw.any { lower.contains(it) }) types.add("NCSC")
 
+        // Location follow-up — "where is the office", "what is the address",
+        // "how do I get there", "where can I go" etc.
+        // When the user asks a navigation/location question we inject all common
+        // office types so Gemma can surface whichever is relevant from context.
+        val locationKw = setOf(
+            "where", "address", "location", "directions", "how to reach", "how to go",
+            "how do i get", "find the office", "office address", "office location",
+            "कहाँ", "कहां", "पता", "कार्यालय",
+            "ఎక్కడ", "చిరునామా", "కార్యాలయం",
+            "എവിടെ", "വിലാസം", "ഓഫീസ്",
+            "ಎಲ್ಲಿ", "ವಿಳಾಸ", "ಕಚೇರಿ",
+            "எங்கே", "முகவரி", "அலுவலகம்",
+        )
+        if (locationKw.any { lower.contains(it) }) {
+            for (t in listOf("AGRI", "COLLECTOR", "DLSA", "LABOUR", "SW", "PMKISAN")) {
+                if (!types.contains(t)) types.add(t)
+            }
+        }
+
         return types
     }
 
