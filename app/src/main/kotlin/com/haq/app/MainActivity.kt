@@ -50,6 +50,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -721,6 +722,7 @@ private fun MainAppContent(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) onMicTap() }
 
+    val context = LocalContext.current
     val ttsSpeaking by TTSManager.isSpeaking.collectAsStateWithLifecycle()
     var showProfileSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState()
@@ -776,7 +778,32 @@ private fun MainAppContent(
             )
         }
 
-        Spacer(Modifier.height(16.dp))
+        // ── Share button — shown when there's a response and the app is idle ───
+        if (responseText.isNotEmpty() && appState == AppState.READY && !ttsSpeaking) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                IconButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, responseText)
+                            putExtra(Intent.EXTRA_SUBJECT, "Haq — Government scheme information")
+                        }
+                        context.startActivity(Intent.createChooser(intent, null))
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = "Share response",
+                        tint = HaqMuted,
+                    )
+                }
+            }
+        } else {
+            Spacer(Modifier.height(16.dp))
+        }
 
         // ── Status hint ───────────────────────────────────────────────────────
         Text(
