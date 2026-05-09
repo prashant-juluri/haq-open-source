@@ -73,6 +73,13 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         startDownload()
         checkOnboardingState()
 
+        // Pre-copy both asset DBs to filesDir while Gemma is still loading
+        // so the first query has no copy latency (~325 ms on first install).
+        viewModelScope.launch {
+            SchemeRepository.preload(getApplication())
+            LawRepository.preload(getApplication())
+        }
+
         viewModelScope.launch {
             downloadState.collect { dl ->
                 if (dl is DownloadState.Complete) {

@@ -33,6 +33,16 @@ object LawRepository {
     private const val PREF_VERSION = "law_db_version"
 
     /**
+     * Copies law.db from assets to filesDir eagerly so the first [search]
+     * call incurs no copy or version-check latency.
+     */
+    suspend fun preload(context: Context) = withContext(Dispatchers.IO) {
+        try { ensureDatabase(context) } catch (e: Exception) {
+            Log.w(TAG, "preload failed: ${e.message}")
+        }
+    }
+
+    /**
      * Returns rag_chunk strings for the top [MAX_RESULTS] law sections that
      * match the user's query.  Returns an empty list on any error so callers
      * always proceed — law context is additive, not required.

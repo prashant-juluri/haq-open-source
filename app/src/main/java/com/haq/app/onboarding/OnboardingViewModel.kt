@@ -636,21 +636,31 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
      * Defaults to "General" when nothing matches.
      */
     private fun extractCaste(transcript: String): String {
-        val lower = transcript.lowercase()
+        // Normalise: collapse spaces/dots so "S C", "S.C.", "s. c." all become "sc"
+        val lower   = transcript.lowercase()
+        val compact = lower.replace(Regex("[.\\s]+"), " ").trim()
+
         val result = when {
-            lower.contains("schedule") && lower.contains("tribe") -> "ST"
-            lower.contains("schedule") && lower.contains("caste") -> "SC"
-            Regex("\\bst\\b").containsMatchIn(lower)              -> "ST"
-            Regex("\\bsc\\b").containsMatchIn(lower)              -> "SC"
+            // Explicit "scheduled tribe / caste" phrases
+            lower.contains("schedule") && lower.contains("tribe")  -> "ST"
+            lower.contains("schedule") && lower.contains("caste")  -> "SC"
+            // "scheduled" alone in an Indian onboarding context almost always = SC
+            lower.contains("schedul")                              -> "SC"
+            // Abbreviations — check compact form so "s c" and "sc" both match
+            Regex("\\bst\\b").containsMatchIn(compact)             -> "ST"
+            Regex("\\bsc\\b").containsMatchIn(compact)             -> "SC"
+            // OBC
             lower.contains("obc") || lower.contains("other backward") ||
-                lower.contains("पिछड़")                           -> "OBC"
+                lower.contains("पिछड़")                            -> "OBC"
+            // General
             lower.contains("general") || lower.contains("open") ||
                 lower.contains("unreserved") || lower.contains("forward") ||
-                lower.contains("सामान्य")                        -> "General"
+                lower.contains("सामान्य")                         -> "General"
+            // Community terms
             lower.contains("adivasi") || lower.contains("tribal") ||
-                lower.contains("आदिवासी")                        -> "ST"
-            lower.contains("dalit") || lower.contains("हरिजन")   -> "SC"
-            else                                                   -> "General"
+                lower.contains("आदिवासी")                         -> "ST"
+            lower.contains("dalit") || lower.contains("हरिजन")    -> "SC"
+            else                                                    -> "General"
         }
         Log.d("Haq/Onboarding", "extractCaste: '$transcript' → '$result'")
         return result
