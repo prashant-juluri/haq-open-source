@@ -32,6 +32,17 @@ object SchemeRepository {
     private const val MAX_RESULTS = 4
 
     /**
+     * Copies schemes.db from assets to filesDir eagerly so the first [search]
+     * call incurs no copy latency.  Safe to call multiple times — a no-op if the
+     * file already exists at the expected version.
+     */
+    suspend fun preload(context: Context) = withContext(Dispatchers.IO) {
+        try { ensureDatabase(context) } catch (e: Exception) {
+            Log.w(TAG, "preload failed: ${e.message}")
+        }
+    }
+
+    /**
      * Returns rag_chunk strings for the top [MAX_RESULTS] schemes ranked by
      * how closely they match the user's profile. Returns an empty list on any
      * error so callers can always proceed with a Gemma prompt that lacks context.

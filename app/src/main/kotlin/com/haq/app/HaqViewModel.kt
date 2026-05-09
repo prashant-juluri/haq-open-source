@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.haq.app.data.ProfileManager
+import com.haq.app.data.LawRepository
 import com.haq.app.data.SchemeRepository
 import com.haq.app.data.SessionManager
 import com.haq.app.data.UserProfile
@@ -71,6 +72,13 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     init {
         startDownload()
         checkOnboardingState()
+
+        // Pre-copy both asset DBs to filesDir while Gemma is still loading
+        // so the first query has no copy latency (~325 ms on first install).
+        viewModelScope.launch {
+            SchemeRepository.preload(getApplication())
+            LawRepository.preload(getApplication())
+        }
 
         viewModelScope.launch {
             downloadState.collect { dl ->
@@ -327,13 +335,27 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } ?: emptyList()
 
-            val ragContext = if (ragChunks.isNotEmpty()) {
-                "\nRelevant government schemes:\n" +
-                ragChunks.joinToString("\n---\n") +
-                "\n"
-            } else ""
+            // ── RAG: fetch relevant law sections from law.db ─────────────────
+            // Only queried when the user's question contains legal keywords so
+            // everyday scheme queries don't pay the law DB scan cost.
+            val lawChunks = if (hasLegalKeywords(prompt)) {
+                LawRepository.search(context = getApplication(), query = prompt)
+            } else emptyList()
 
-            Log.d("Haq/RAG", "${ragChunks.size} chunks injected (${ragContext.length} chars)")
+            val ragContext = buildString {
+                if (ragChunks.isNotEmpty()) {
+                    append("\nRelevant government schemes:\n")
+                    append(ragChunks.joinToString("\n---\n"))
+                    append("\n")
+                }
+                if (lawChunks.isNotEmpty()) {
+                    append("\nRelevant law:\n")
+                    append(lawChunks.joinToString("\n---\n"))
+                    append("\n")
+                }
+            }
+
+            Log.d("Haq/RAG", "${ragChunks.size} scheme chunks + ${lawChunks.size} law chunks injected (${ragContext.length} chars)")
 
             // Build two queries: one with last-exchange history, one without.
             // The fallback is used if the first attempt fails before emitting
@@ -580,6 +602,19 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         GemmaManager.shutdown()
     }
 
+    /**
+     * Returns true when [query] contains words that suggest the user is asking
+     * about legal rights, acts, or statutory provisions — so [LawRepository]
+     * is worth consulting.  Checked against English keywords only; non-English
+     * queries with no ASCII content fall through to scheme-only RAG.
+     */
+    private fun hasLegalKeywords(query: String): Boolean {
+        val lower = query.lowercase()
+        val matched = LEGAL_KEYWORDS.firstOrNull { lower.contains(it) }
+        Log.d("Haq/RAG", "hasLegalKeywords=${ matched != null } matched='$matched'")
+        return matched != null
+    }
+
     companion object {
         // Must match LiteRTEngine.MAX_TOKENS (2048).
         private const val KV_CACHE_TOKENS = 2048
@@ -588,5 +623,535 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         private const val RESPONSE_RESERVE_TOKENS = 600
         // System prompt token count measured from prefill logs.
         private const val SYSTEM_PROMPT_TOKENS = 70
+
+        // Keywords that trigger LawRepository lookup.
+        // Covers all 12 supported languages across 5 categories:
+        //   statutory/rights · offences/enforcement · labour/employment
+        //   property/family  · consumer/other
+        // hasLegalKeywords() calls contains() on the lowercased query —
+        // non-ASCII scripts match verbatim (no case in Devanagari etc.).
+        private val LEGAL_KEYWORDS = setOf(
+
+            // ── English ───────────────────────────────────────────────────────
+            // Statutory / rights
+            "right", "rights", "law", "act", "section", "legal", "court",
+            "entitled", "liable", "tribunal", "appeal", "violation", "protection",
+            "under the", "according to", "remedy", "cognizable",
+            // Offences / enforcement
+            "penalty", "offence", "offense", "punish", "fine", "jail", "arrest",
+            "warrant", "complaint", "dispute", "grievance", "damages", "compensation",
+            // Labour / employment
+            "wage", "wages", "salary", "minimum wage", "employer", "employee",
+            "labour", "labor", "worker", "dismiss", "fired", "termination",
+            "overtime", "working hours", "provident fund", "esi", "maternity",
+            // Property / family
+            "evict", "eviction", "tenant", "landlord", "divorce", "custody",
+            "inheritance", "property", "dowry", "domestic violence",
+            // Consumer / other
+            "fraud", "cheat", "cheated", "bribe", "corruption", "ration",
+
+            // ── Hindi (hi) ────────────────────────────────────────────────────
+            // Statutory / rights
+            "अधिकार",        // right / entitlement
+            "कानून",          // law
+            "अधिनियम",       // act (legislative)
+            "धारा",           // section of an act
+            "न्यायालय",       // court
+            "अदालत",          // court (colloquial)
+            "न्यायाधिकरण",   // tribunal
+            "अपील",           // appeal
+            "उल्लंघन",        // violation
+            "संरक्षण",        // protection
+            "हकदार",          // entitled
+            // Offences / enforcement
+            "दंड",            // penalty
+            "जुर्माना",        // fine
+            "जेल",            // jail
+            "गिरफ्तारी",      // arrest
+            "वारंट",          // warrant
+            "शिकायत",         // complaint
+            "विवाद",          // dispute
+            "मुआवजा",         // compensation
+            "हर्जाना",         // damages
+            // Labour / employment
+            "वेतन",           // salary
+            "मजदूरी",         // wages
+            "न्यूनतम मजदूरी", // minimum wages
+            "नियोक्ता",       // employer
+            "कर्मचारी",       // employee
+            "श्रमिक",         // worker
+            "बर्खास्त",       // dismissed / fired
+            "ओवरटाइम",       // overtime
+            "भविष्य निधि",   // provident fund
+            "मातृत्व",        // maternity
+            // Property / family
+            "बेदखल",          // eviction
+            "किरायेदार",      // tenant
+            "मकान मालिक",    // landlord
+            "तलाक",           // divorce
+            "हिरासत",         // custody
+            "विरासत",         // inheritance
+            "संपत्ति",        // property
+            "दहेज",           // dowry
+            "घरेलू हिंसा",    // domestic violence
+            // Consumer / other
+            "धोखाधड़ी",       // fraud
+            "धोखा",           // cheat
+            "रिश्वत",         // bribe
+            "भ्रष्टाचार",     // corruption
+            "राशन",           // ration
+
+            // ── Telugu (te) ───────────────────────────────────────────────────
+            // Statutory / rights
+            "హక్కు",          // right
+            "చట్టం",          // law
+            "చట్ట నిబంధన",   // section of an act
+            "న్యాయస్థానం",    // court
+            "న్యాయమండలి",    // tribunal
+            "అప్పీలు",        // appeal
+            "ఉల్లంఘన",        // violation
+            "రక్షణ",          // protection
+            // Offences / enforcement
+            "శిక్ష",           // punishment / penalty
+            "జరిమానా",        // fine
+            "జైలు",           // jail
+            "అరెస్టు",        // arrest
+            "వారెంటు",        // warrant
+            "ఫిర్యాదు",       // complaint
+            "వివాదం",         // dispute
+            "నష్టపరిహారం",    // compensation
+            "నష్టాలు",        // damages
+            // Labour / employment
+            "వేతనం",          // salary / wages
+            "కూలి",           // daily wages
+            "కార్మికుడు",     // worker
+            "యజమాని",        // employer
+            "ఉద్యోగి",        // employee
+            "తొలగింపు",       // dismissal
+            "అదనపు గంటలు",   // overtime
+            "భవిష్యనిధి",     // provident fund
+            "మాతృత్వం",      // maternity
+            // Property / family
+            "అద్దెదారు",      // tenant
+            "ఇంటి యజమాని",  // landlord
+            "విడాకులు",       // divorce
+            "సంరక్షణ",        // custody
+            "వారసత్వం",       // inheritance
+            "ఆస్తి",          // property
+            "కట్నం",          // dowry
+            "గృహహింస",       // domestic violence
+            // Consumer / other
+            "మోసం",           // fraud
+            "లంచం",           // bribe
+            "అవినీతి",        // corruption
+            "రేషను",          // ration
+
+            // ── Malayalam (ml) ────────────────────────────────────────────────
+            // Statutory / rights
+            "അവകാശം",        // right
+            "നിയമം",          // law
+            "വകുപ്പ്",         // section of an act
+            "കോടതി",          // court
+            "ട്രൈബ്യൂണൽ",    // tribunal
+            "അപ്പീൽ",         // appeal
+            "ലംഘനം",         // violation
+            "സംരക്ഷണം",      // protection
+            // Offences / enforcement
+            "ശിക്ഷ",          // punishment
+            "പിഴ",            // fine
+            "ജയിൽ",          // jail
+            "അറസ്റ്റ്",        // arrest
+            "വാറണ്ട്",        // warrant
+            "പരാതി",          // complaint
+            "തർക്കം",         // dispute
+            "നഷ്ടപരിഹാരം",   // compensation
+            "നഷ്ടം",          // damages
+            // Labour / employment
+            "വേതനം",          // salary / wages
+            "കൂലി",           // daily wages
+            "തൊഴിലാളി",      // worker
+            "തൊഴിലുടമ",      // employer
+            "ജീവനക്കാരൻ",    // employee
+            "പിരിച്ചുവിടൽ",  // dismissal
+            "ഓവർടൈം",        // overtime
+            "പ്രൊവിഡന്റ് ഫണ്ട്", // provident fund
+            "പ്രസവ ആനുകൂല്യം",   // maternity benefit
+            // Property / family
+            "വാടകക്കാരൻ",    // tenant
+            "വീട്ടുടമ",       // landlord
+            "വിവാഹമോചനം",    // divorce
+            "കസ്റ്റഡി",       // custody
+            "അനന്തരാവകാശം",  // inheritance
+            "സ്വത്ത്",        // property
+            "സ്ത്രീധനം",      // dowry
+            "ഗാർഹിക പീഡനം",  // domestic violence
+            // Consumer / other
+            "തട്ടിപ്പ്",       // fraud
+            "കൈക്കൂലി",       // bribe
+            "അഴിമതി",        // corruption
+            "റേഷൻ",          // ration
+
+            // ── Kannada (kn) ──────────────────────────────────────────────────
+            // Statutory / rights
+            "ಹಕ್ಕು",          // right
+            "ಕಾನೂನು",         // law
+            "ಕಾಯ್ದೆ",         // act (legislative)
+            "ಕಲಂ",            // section of an act
+            "ನ್ಯಾಯಾಲಯ",       // court
+            "ನ್ಯಾಯಮಂಡಳಿ",    // tribunal
+            "ಮೇಲ್ಮನವಿ",       // appeal
+            "ಉಲ್ಲಂಘನೆ",       // violation
+            "ರಕ್ಷಣೆ",         // protection
+            // Offences / enforcement
+            "ಶಿಕ್ಷೆ",          // punishment
+            "ದಂಡ",            // fine / penalty
+            "ಜೈಲು",           // jail
+            "ಬಂಧನ",           // arrest
+            "ವಾರಂಟ್",         // warrant
+            "ದೂರು",           // complaint
+            "ವಿವಾದ",          // dispute
+            "ಪರಿಹಾರ",         // compensation
+            "ನಷ್ಟ",           // damages
+            // Labour / employment
+            "ವೇತನ",           // salary / wages
+            "ಕೂಲಿ",           // daily wages
+            "ಕಾರ್ಮಿಕ",        // worker
+            "ಮಾಲೀಕ",          // employer
+            "ನೌಕರ",           // employee
+            "ವಜಾ",            // dismissal
+            "ಹೆಚ್ಚುವರಿ ಸಮಯ",  // overtime
+            "ಭವಿಷ್ಯ ನಿಧಿ",    // provident fund
+            "ಮಾತೃತ್ವ",        // maternity
+            // Property / family
+            "ಬಾಡಿಗೆದಾರ",      // tenant
+            "ಮನೆ ಮಾಲೀಕ",     // landlord
+            "ವಿಚ್ಛೇದನ",       // divorce
+            "ಪಾಲನೆ",          // custody
+            "ಉತ್ತರಾಧಿಕಾರ",    // inheritance
+            "ಆಸ್ತಿ",          // property
+            "ವರದಕ್ಷಿಣೆ",      // dowry
+            "ಗೃಹ ಹಿಂಸೆ",      // domestic violence
+            // Consumer / other
+            "ಮೋಸ",            // fraud
+            "ಲಂಚ",            // bribe
+            "ಭ್ರಷ್ಟಾಚಾರ",     // corruption
+            "ರೇಷನ್",          // ration
+
+            // ── Tamil (ta) ────────────────────────────────────────────────────
+            // Statutory / rights
+            "உரிமை",          // right
+            "சட்டம்",         // law
+            "சட்டப்பிரிவு",   // section of an act
+            "நீதிமன்றம்",     // court
+            "தீர்ப்பாயம்",    // tribunal
+            "மேல்முறையீடு",   // appeal
+            "மீறல்",          // violation
+            "பாதுகாப்பு",     // protection
+            // Offences / enforcement
+            "தண்டனை",        // punishment / penalty
+            "அபராதம்",        // fine
+            "சிறைச்சாலை",    // jail
+            "கைது",           // arrest
+            "வாரண்ட்",        // warrant
+            "புகார்",          // complaint
+            "தகராறு",         // dispute
+            "இழப்பீடு",       // compensation
+            "சேதஈடு",        // damages
+            // Labour / employment
+            "ஊதியம்",         // salary / wages
+            "கூலி",           // daily wages
+            "தொழிலாளர்",     // worker
+            "முதலாளி",        // employer
+            "ஊழியர்",         // employee
+            "பணிநீக்கம்",     // dismissal
+            "கூடுதல் நேரம்",  // overtime
+            "வருங்கால வைப்பு நிதி", // provident fund
+            "மகப்பேறு",       // maternity
+            // Property / family
+            "குத்தகைதாரர்",   // tenant
+            "வீட்டு உரிமையாளர்", // landlord
+            "விவாகரத்து",     // divorce
+            "காவல்",          // custody
+            "வாரிசுரிமை",     // inheritance
+            "சொத்து",         // property
+            "வரதட்சணை",      // dowry
+            "குடும்ப வன்முறை", // domestic violence
+            // Consumer / other
+            "மோசடி",          // fraud
+            "இலஞ்சம்",        // bribe
+            "ஊழல்",           // corruption
+            "ரேஷன்",          // ration
+
+            // ── Bengali (bn) ──────────────────────────────────────────────────
+            // Statutory / rights
+            "অধিকার",         // right
+            "আইন",            // law
+            "ধারা",           // section of an act
+            "আদালত",          // court
+            "ট্রাইব্যুনাল",   // tribunal
+            "আপিল",           // appeal
+            "লঙ্ঘন",          // violation
+            "সুরক্ষা",        // protection
+            // Offences / enforcement
+            "শাস্তি",          // punishment
+            "জরিমানা",        // fine
+            "কারাগার",        // jail
+            "গ্রেফতার",       // arrest
+            "পরোয়ানা",       // warrant
+            "অভিযোগ",        // complaint
+            "বিরোধ",          // dispute
+            "ক্ষতিপূরণ",      // compensation
+            "ক্ষতি",          // damages
+            // Labour / employment
+            "বেতন",           // salary
+            "মজুরি",          // wages
+            "শ্রমিক",         // worker
+            "নিয়োগকর্তা",    // employer
+            "কর্মচারী",       // employee
+            "বরখাস্ত",        // dismissal
+            "অতিরিক্ত সময়",  // overtime
+            "ভবিষ্যৎ তহবিল",  // provident fund
+            "মাতৃত্ব",        // maternity
+            // Property / family
+            "ভাড়াটে",        // tenant
+            "বাড়িওয়ালা",     // landlord
+            "বিবাহবিচ্ছেদ",   // divorce
+            "হেফাজত",         // custody
+            "উত্তরাধিকার",    // inheritance
+            "সম্পত্তি",       // property
+            "যৌতুক",          // dowry
+            "পারিবারিক সহিংসতা", // domestic violence
+            // Consumer / other
+            "প্রতারণা",       // fraud
+            "ঘুষ",            // bribe
+            "দুর্নীতি",       // corruption
+            "রেশন",           // ration
+
+            // ── Gujarati (gu) ─────────────────────────────────────────────────
+            // Statutory / rights
+            "અધિકાર",         // right
+            "કાયદો",          // law
+            "કલમ",            // section of an act
+            "અદાલત",          // court
+            "ન્યાયાધિકરણ",    // tribunal
+            "અપીલ",           // appeal
+            "ઉલ્લંઘન",        // violation
+            "રક્ષણ",          // protection
+            // Offences / enforcement
+            "સજા",            // punishment
+            "દંડ",            // fine / penalty
+            "જેલ",            // jail
+            "ધરપકડ",          // arrest
+            "વૉરંટ",          // warrant
+            "ફરિયાદ",         // complaint
+            "વિવાદ",          // dispute
+            "વળતર",           // compensation
+            "નુકસાન",         // damages
+            // Labour / employment
+            "વેતન",           // salary
+            "મજૂરી",          // wages
+            "કામદાર",         // worker
+            "માલિક",          // employer
+            "કર્મચારી",       // employee
+            "બરખાસ્ત",        // dismissal
+            "ઓવરટાઇમ",       // overtime
+            "ભવિષ્ય નિધિ",    // provident fund
+            "માતૃત્વ",        // maternity
+            // Property / family
+            "ભાડૂત",          // tenant
+            "મકાનમાલિક",     // landlord
+            "છૂટાછેડા",       // divorce
+            "વાલીપણ",         // custody
+            "વારસો",          // inheritance
+            "મિલકત",          // property
+            "દહેજ",           // dowry
+            "ઘરેલુ હિંસા",    // domestic violence
+            // Consumer / other
+            "છેતરપિંડી",      // fraud
+            "લાંચ",           // bribe
+            "ભ્રષ્ટાચાર",     // corruption
+            "રેશન",           // ration
+
+            // ── Marathi (mr) ──────────────────────────────────────────────────
+            // Statutory / rights
+            "अधिकार",         // right
+            "कायदा",          // law
+            "कलम",            // section of an act
+            "न्यायालय",       // court
+            "न्यायाधिकरण",   // tribunal
+            "अपील",           // appeal
+            "उल्लंघन",        // violation
+            "संरक्षण",        // protection
+            // Offences / enforcement
+            "शिक्षा",          // punishment
+            "दंड",            // fine / penalty
+            "तुरुंग",         // jail
+            "अटक",            // arrest
+            "वॉरंट",          // warrant
+            "तक्रार",         // complaint
+            "वाद",            // dispute
+            "नुकसानभरपाई",    // compensation
+            "नुकसान",         // damages
+            // Labour / employment
+            "वेतन",           // salary
+            "मजुरी",          // wages
+            "कामगार",         // worker
+            "मालक",           // employer
+            "कर्मचारी",       // employee
+            "बडतर्फ",         // dismissal
+            "ओव्हरटाइम",     // overtime
+            "भविष्य निर्वाह निधी", // provident fund
+            "मातृत्व",        // maternity
+            // Property / family
+            "भाडेकरू",        // tenant
+            "घरमालक",         // landlord
+            "घटस्फोट",        // divorce
+            "ताबा",           // custody
+            "वारसा",          // inheritance
+            "मालमत्ता",       // property
+            "हुंडा",          // dowry
+            "कौटुंबिक हिंसाचार", // domestic violence
+            // Consumer / other
+            "फसवणूक",         // fraud
+            "लाच",            // bribe
+            "भ्रष्टाचार",     // corruption
+            "रेशन",           // ration
+
+            // ── Odia (or) ─────────────────────────────────────────────────────
+            // Statutory / rights
+            "ଅଧିକାର",        // right
+            "ଆଇନ",            // law
+            "ଧାରା",           // section of an act
+            "ଆଦାଲତ",         // court
+            "ଟ୍ରାଇବ୍ୟୁନାଲ",  // tribunal
+            "ଅପିଲ",           // appeal
+            "ଉଲ୍ଲଂଘନ",        // violation
+            "ସୁରକ୍ଷା",        // protection
+            // Offences / enforcement
+            "ଶାସ୍ତି",         // punishment
+            "ଜୁର୍ମାନା",       // fine
+            "ଜେଲ",            // jail
+            "ଗିରଫ",           // arrest
+            "ୱାରେଣ୍ଟ",        // warrant
+            "ଅଭିଯୋଗ",        // complaint
+            "ବିବାଦ",          // dispute
+            "କ୍ଷତିପୂରଣ",     // compensation
+            "କ୍ଷତି",          // damages
+            // Labour / employment
+            "ବେତନ",           // salary
+            "ମଜୁରି",          // wages
+            "ଶ୍ରମିକ",         // worker
+            "ମାଲିକ",          // employer
+            "କର୍ମଚାରୀ",      // employee
+            "ବରଖାସ୍ତ",        // dismissal
+            "ଅଧିକ ସମୟ",      // overtime
+            "ଭବିଷ୍ୟ ନିଧି",   // provident fund
+            "ମାତୃତ୍ୱ",        // maternity
+            // Property / family
+            "ଭଡ଼ାଟିଆ",        // tenant
+            "ଗୃହ ମାଲିକ",     // landlord
+            "ବିବାହ ବିଚ୍ଛେଦ", // divorce
+            "ଅଭିରକ୍ଷା",      // custody
+            "ଉତ୍ତରାଧିକାର",   // inheritance
+            "ସଂପତ୍ତି",       // property
+            "ଯୌତୁକ",         // dowry
+            "ଘରୋଇ ହିଂସା",    // domestic violence
+            // Consumer / other
+            "ଠକାମି",          // fraud
+            "ଘୁଷ",            // bribe
+            "ଦୁର୍ନୀତି",       // corruption
+            "ରେସନ",           // ration
+
+            // ── Assamese (as) ─────────────────────────────────────────────────
+            // Statutory / rights
+            "অধিকাৰ",        // right
+            "আইন",            // law
+            "ধাৰা",           // section of an act
+            "আদালত",          // court
+            "ন্যায়াধিকৰণ",   // tribunal
+            "আপীল",           // appeal
+            "উল্লংঘন",        // violation
+            "সুৰক্ষা",        // protection
+            // Offences / enforcement
+            "শাস্তি",          // punishment
+            "জৰিমনা",         // fine
+            "কাৰাগাৰ",        // jail
+            "গ্ৰেপ্তাৰ",      // arrest
+            "ৱাৰেণ্ট",        // warrant
+            "অভিযোগ",        // complaint
+            "বিবাদ",          // dispute
+            "ক্ষতিপূৰণ",     // compensation
+            "ক্ষতি",          // damages
+            // Labour / employment
+            "দৰমহা",          // salary
+            "মজুৰি",          // wages
+            "শ্ৰমিক",         // worker
+            "নিয়োগকৰ্তা",   // employer
+            "কৰ্মচাৰী",      // employee
+            "বৰখাস্ত",        // dismissal
+            "অতিৰিক্ত সময়",  // overtime
+            "ভৱিষ্যৎ নিধি",   // provident fund
+            "মাতৃত্ব",        // maternity
+            // Property / family
+            "ভাড়াতীয়া",     // tenant
+            "গৃহস্বামী",      // landlord
+            "বিবাহ বিচ্ছেদ",  // divorce
+            "অভিৰক্ষা",      // custody
+            "উত্তৰাধিকাৰ",   // inheritance
+            "সম্পত্তি",       // property
+            "যৌতুক",         // dowry
+            "ঘৰেলু হিংসা",   // domestic violence
+            // Consumer / other
+            "প্ৰতাৰণা",       // fraud
+            "ঘুচ",            // bribe
+            "দুৰ্নীতি",       // corruption
+            "ৰেচন",           // ration
+
+            // ── Nepali (ne) ───────────────────────────────────────────────────
+            // Statutory / rights
+            "अधिकार",         // right
+            "कानून",           // law
+            "दफा",            // section of an act
+            "अदालत",          // court
+            "न्यायाधिकरण",   // tribunal
+            "पुनरावेदन",      // appeal
+            "उल्लंघन",        // violation
+            "संरक्षण",        // protection
+            // Offences / enforcement
+            "सजाय",           // punishment
+            "जरिमाना",        // fine
+            "जेल",            // jail
+            "पक्राउ",         // arrest
+            "पक्राउ पूर्जी",  // warrant
+            "गुनासो",         // complaint
+            "विवाद",          // dispute
+            "मुआवजा",         // compensation
+            "हर्जाना",         // damages
+            // Labour / employment
+            "तलब",            // salary
+            "ज्याला",         // wages
+            "मजदूरी",         // wages (colloquial)
+            "रोजगारदाता",     // employer
+            "कर्मचारी",       // employee
+            "श्रमिक",         // worker
+            "बर्खास्त",       // dismissal
+            "ओभरटाइम",       // overtime
+            "भविष्य कोष",     // provident fund
+            "मातृत्व",        // maternity
+            // Property / family
+            "भाडावाल",        // tenant
+            "घरधनी",          // landlord
+            "सम्बन्धविच्छेद", // divorce
+            "अभिरक्षा",       // custody
+            "उत्तराधिकार",    // inheritance
+            "सम्पत्ति",       // property
+            "दाइजो",          // dowry
+            "घरेलु हिंसा",    // domestic violence
+            // Consumer / other
+            "ठगी",            // fraud
+            "घुस",            // bribe
+            "भ्रष्टाचार",     // corruption
+            "राशन",           // ration
+        )
     }
 }
