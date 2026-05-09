@@ -624,10 +624,14 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         // System prompt token count measured from prefill logs.
         private const val SYSTEM_PROMPT_TOKENS = 70
 
-        // English keywords that signal a legal question — triggers LawRepository lookup.
-        // Kept intentionally broad: better to do an extra DB scan than miss a rights question.
-        // Covers: statutory rights, employment/labour, criminal, property, family law.
+        // Keywords that trigger LawRepository lookup.
+        // Covers all 12 supported languages. hasLegalKeywords() does contains()
+        // on the lowercased query, so non-ASCII scripts match verbatim.
+        // Intentionally broad — a spurious law scan costs ~200 ms; a missed
+        // rights question leaves the user without statutory grounding.
         private val LEGAL_KEYWORDS = setOf(
+
+            // ── English ───────────────────────────────────────────────────────
             // Statutory / rights
             "right", "rights", "law", "act", "section", "legal", "court",
             "entitled", "liable", "tribunal", "appeal", "violation", "protection",
@@ -644,6 +648,170 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "inheritance", "property", "dowry", "domestic violence",
             // Consumer / other
             "fraud", "cheat", "cheated", "bribe", "corruption", "ration",
+
+            // ── Hindi (hi) ────────────────────────────────────────────────────
+            "अधिकार",       // right / entitlement
+            "कानून",         // law
+            "धारा",          // section (of an act)
+            "न्यायालय",      // court
+            "अदालत",         // court (colloquial)
+            "वेतन",          // salary
+            "मजदूरी",        // wages
+            "न्यूनतम मजदूरी", // minimum wages
+            "श्रमिक",        // worker / labourer
+            "कर्मचारी",      // employee
+            "नियोक्ता",      // employer
+            "मुआवजा",        // compensation
+            "हर्जाना",        // damages
+            "शिकायत",        // complaint
+            "न्याय",         // justice
+            "जुर्माना",       // fine / penalty
+            "गिरफ्तारी",     // arrest
+            "बेदखल",         // eviction
+            "दहेज",          // dowry
+            "घरेलू हिंसा",   // domestic violence
+            "भ्रष्टाचार",    // corruption
+            "धोखाधड़ी",      // fraud
+            "अपील",          // appeal
+
+            // ── Telugu (te) ───────────────────────────────────────────────────
+            "హక్కు",         // right
+            "చట్టం",         // law
+            "వేతనం",         // salary / wages
+            "కూలి",          // daily wages
+            "కార్మికుడు",    // worker
+            "నష్టపరిహారం",   // compensation
+            "ఫిర్యాదు",      // complaint
+            "న్యాయం",        // justice
+            "న్యాయస్థానం",   // court
+            "యజమాని",        // employer
+            "శిక్ష",         // punishment / penalty
+            "అరెస్టు",       // arrest
+            "కట్నం",         // dowry
+
+            // ── Malayalam (ml) ────────────────────────────────────────────────
+            "അവകാശം",       // right
+            "നിയമം",         // law
+            "വേതനം",         // salary / wages
+            "കൂലി",          // daily wages
+            "തൊഴിലാളി",     // worker
+            "നഷ്ടപരിഹാരം",  // compensation
+            "പരാതി",         // complaint
+            "നീതി",          // justice
+            "കോടതി",         // court
+            "തൊഴിലുടമ",     // employer
+            "ശിക്ഷ",         // punishment
+            "സ്ത്രീധനം",     // dowry
+            "ഗാർഹിക പീഡനം", // domestic violence
+
+            // ── Kannada (kn) ──────────────────────────────────────────────────
+            "ಹಕ್ಕು",         // right
+            "ಕಾನೂನು",        // law
+            "ವೇತನ",          // salary / wages
+            "ಕೂಲಿ",          // daily wages
+            "ಕಾರ್ಮಿಕ",       // worker
+            "ಪರಿಹಾರ",        // compensation
+            "ದೂರು",          // complaint
+            "ನ್ಯಾಯ",         // justice
+            "ನ್ಯಾಯಾಲಯ",      // court
+            "ಮಾಲೀಕ",         // employer
+            "ಶಿಕ್ಷೆ",         // punishment
+            "ವರದಕ್ಷಿಣೆ",     // dowry
+
+            // ── Tamil (ta) ────────────────────────────────────────────────────
+            "உரிமை",         // right
+            "சட்டம்",        // law
+            "ஊதியம்",        // salary / wages
+            "கூலி",          // daily wages
+            "தொழிலாளர்",    // worker
+            "இழப்பீடு",      // compensation
+            "புகார்",         // complaint
+            "நீதி",           // justice
+            "நீதிமன்றம்",    // court
+            "முதலாளி",       // employer
+            "தண்டனை",        // punishment
+            "வரதட்சணை",     // dowry
+
+            // ── Bengali (bn) ──────────────────────────────────────────────────
+            "অধিকার",        // right
+            "আইন",           // law
+            "বেতন",          // salary
+            "মজুরি",         // wages
+            "শ্রমিক",        // worker
+            "ক্ষতিপূরণ",     // compensation
+            "অভিযোগ",        // complaint
+            "ন্যায়",         // justice
+            "আদালত",         // court
+            "নিয়োগকর্তা",   // employer
+            "শাস্তি",         // punishment
+            "যৌতুক",         // dowry
+
+            // ── Gujarati (gu) ─────────────────────────────────────────────────
+            "અધિકાર",        // right
+            "કાયદો",         // law
+            "વેતન",          // salary
+            "મજૂરી",         // wages
+            "કામદાર",        // worker
+            "વળતર",          // compensation
+            "ફરિયાદ",        // complaint
+            "ન્યાય",         // justice
+            "અદાલત",         // court
+            "માલિક",         // employer
+            "સજા",           // punishment
+            "દહેજ",          // dowry
+
+            // ── Marathi (mr) ──────────────────────────────────────────────────
+            "अधिकार",        // right  (same script as Hindi, distinct words)
+            "कायदा",         // law
+            "वेतन",          // salary
+            "मजुरी",         // wages
+            "कामगार",        // worker
+            "नुकसानभरपाई",  // compensation
+            "तक्रार",        // complaint
+            "न्यायालय",      // court
+            "मालक",          // employer
+            "शिक्षा",        // punishment
+            "हुंडा",         // dowry
+
+            // ── Odia (or) ─────────────────────────────────────────────────────
+            "ଅଧିକାର",       // right
+            "ଆଇନ",           // law
+            "ବେତନ",          // salary
+            "ମଜୁରି",         // wages
+            "ଶ୍ରମିକ",        // worker
+            "କ୍ଷତିପୂରଣ",    // compensation
+            "ଅଭିଯୋଗ",       // complaint
+            "ନ୍ୟାୟ",         // justice
+            "ଆଦାଲତ",        // court
+            "ମାଲିକ",         // employer
+            "ଯୌତୁକ",        // dowry
+
+            // ── Assamese (as) ─────────────────────────────────────────────────
+            "অধিকাৰ",       // right
+            "আইন",           // law
+            "দৰমহা",         // salary
+            "মজুৰি",         // wages
+            "শ্ৰমিক",        // worker
+            "ক্ষতিপূৰণ",    // compensation
+            "অভিযোগ",        // complaint
+            "ন্যায়",         // justice
+            "আদালত",         // court
+            "নিয়োগকৰ্তা",  // employer
+            "যৌতুক",        // dowry
+
+            // ── Nepali (ne) ───────────────────────────────────────────────────
+            "अधिकार",        // right  (Devanagari, same as Hindi)
+            "कानून",          // law
+            "तलब",           // salary
+            "ज्याला",        // wages
+            "मजदूरी",        // wages (colloquial)
+            "श्रमिक",        // worker
+            "मुआवजा",        // compensation
+            "गुनासो",        // complaint
+            "अदालत",         // court
+            "रोजगारदाता",    // employer
+            "सजाय",          // punishment
+            "दाइजो",         // dowry
         )
     }
 }
