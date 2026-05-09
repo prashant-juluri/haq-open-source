@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.haq.app.data.ProfileManager
+import com.haq.app.data.LawRepository
 import com.haq.app.data.SchemeRepository
 import com.haq.app.data.SessionManager
 import com.haq.app.data.UserProfile
@@ -327,13 +328,27 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } ?: emptyList()
 
-            val ragContext = if (ragChunks.isNotEmpty()) {
-                "\nRelevant government schemes:\n" +
-                ragChunks.joinToString("\n---\n") +
-                "\n"
-            } else ""
+            // ── RAG: fetch relevant law sections from law.db ─────────────────
+            // Only queried when the user's question contains legal keywords so
+            // everyday scheme queries don't pay the law DB scan cost.
+            val lawChunks = if (hasLegalKeywords(prompt)) {
+                LawRepository.search(context = getApplication(), query = prompt)
+            } else emptyList()
 
-            Log.d("Haq/RAG", "${ragChunks.size} chunks injected (${ragContext.length} chars)")
+            val ragContext = buildString {
+                if (ragChunks.isNotEmpty()) {
+                    append("\nRelevant government schemes:\n")
+                    append(ragChunks.joinToString("\n---\n"))
+                    append("\n")
+                }
+                if (lawChunks.isNotEmpty()) {
+                    append("\nRelevant law:\n")
+                    append(lawChunks.joinToString("\n---\n"))
+                    append("\n")
+                }
+            }
+
+            Log.d("Haq/RAG", "${ragChunks.size} scheme chunks + ${lawChunks.size} law chunks injected (${ragContext.length} chars)")
 
             // Build two queries: one with last-exchange history, one without.
             // The fallback is used if the first attempt fails before emitting
@@ -580,6 +595,17 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         GemmaManager.shutdown()
     }
 
+    /**
+     * Returns true when [query] contains words that suggest the user is asking
+     * about legal rights, acts, or statutory provisions — so [LawRepository]
+     * is worth consulting.  Checked against English keywords only; non-English
+     * queries with no ASCII content fall through to scheme-only RAG.
+     */
+    private fun hasLegalKeywords(query: String): Boolean {
+        val lower = query.lowercase()
+        return LEGAL_KEYWORDS.any { lower.contains(it) }
+    }
+
     companion object {
         // Must match LiteRTEngine.MAX_TOKENS (2048).
         private const val KV_CACHE_TOKENS = 2048
@@ -588,5 +614,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         private const val RESPONSE_RESERVE_TOKENS = 600
         // System prompt token count measured from prefill logs.
         private const val SYSTEM_PROMPT_TOKENS = 70
+
+        // English keywords that signal a legal question — triggers LawRepository lookup.
+        // Kept intentionally broad: better to do an extra DB scan than miss a rights question.
+        private val LEGAL_KEYWORDS = setOf(
+            "right", "rights", "law", "act", "section", "legal", "court",
+            "penalty", "offence", "offense", "punish", "fine", "jail", "arrest",
+            "compensation", "entitled", "liable", "tribunal", "appeal", "complaint",
+            "dispute", "violation", "protection", "under the", "according to",
+            "grievance", "remedy", "damages", "warrant", "cognizable",
+        )
     }
 }

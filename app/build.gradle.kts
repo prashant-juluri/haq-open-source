@@ -15,6 +15,8 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1"
+        // Bump whenever law.db is regenerated — LawRepository re-copies on mismatch.
+        buildConfigField("int", "LAW_DB_VERSION", "1")
     }
 
     buildTypes {
@@ -41,6 +43,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     // .litertlm files must not be compressed so LiteRT can mmap them.
