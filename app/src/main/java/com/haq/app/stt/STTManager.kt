@@ -91,6 +91,20 @@ object STTManager {
     }
 
     private fun preferredRecognitionService(context: Context): ComponentName? {
+        // Log ALL available recognition services once so we can identify
+        // the correct package/component on this device.
+        val allServices = context.packageManager.queryIntentServices(
+            Intent(RecognitionService.SERVICE_INTERFACE), 0)
+        if (allServices.isEmpty()) {
+            Log.w("Haq/STT", "No RecognitionService found on device at all")
+        } else {
+            allServices.forEach { info ->
+                Log.d("Haq/STT", "RecognitionService available: " +
+                    "pkg=${info.serviceInfo?.packageName} " +
+                    "cls=${info.serviceInfo?.name}")
+            }
+        }
+
         val services = context.packageManager.queryIntentServices(
             Intent(RecognitionService.SERVICE_INTERFACE).setPackage(GOOGLE_STT_PACKAGE),
             0,
@@ -102,6 +116,17 @@ object STTManager {
         if (googleService != null) {
             val component = ComponentName(googleService.packageName, googleService.name)
             Log.d("Haq/STT", "Using Google STT service: $component")
+            return component
+        }
+
+        // Prefer any non-OEM service that contains "google" in its package name
+        // as a fallback — handles devices where Google STT is under a different package.
+        val googleFallback = allServices.firstOrNull { info ->
+            info.serviceInfo?.packageName?.contains("google", ignoreCase = true) == true
+        }?.serviceInfo
+        if (googleFallback != null) {
+            val component = ComponentName(googleFallback.packageName, googleFallback.name)
+            Log.d("Haq/STT", "Using Google STT fallback: $component")
             return component
         }
 
