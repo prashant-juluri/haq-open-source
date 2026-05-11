@@ -22,6 +22,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 object STTManager {
 
     private const val GOOGLE_STT_PACKAGE = "com.google.android.googlequicksearchbox"
+    // On devices where googlequicksearchbox is absent, Google STT is bundled
+    // into the TTS package. This service supports Indian languages and should
+    // be preferred over AiAiSpeechRecognitionService (com.google.android.as)
+    // which only accepts a small set of language tags.
+    private const val GOOGLE_TTS_PACKAGE  = "com.google.android.tts"
 
     // Application context stored on first call — avoids threading issues
     // with Activity contexts and survives configuration changes.
@@ -119,18 +124,32 @@ object STTManager {
             return component
         }
 
-        // Prefer any non-OEM service that contains "google" in its package name
-        // as a fallback — handles devices where Google STT is under a different package.
+        // googlequicksearchbox not found — check if Google STT is bundled in the
+        // TTS package (com.google.android.tts). This is the case on devices where
+        // the traditional Google Search app is absent. Prefer it over AiAi because
+        // it supports Indian language tags (mr-IN, te-IN, hi-IN, etc.) while AiAi
+        // returns ERROR_LANGUAGE_NOT_SUPPORTED (12) for non-English tags.
+        val ttsBundled = allServices.firstOrNull { info ->
+            info.serviceInfo?.packageName == GOOGLE_TTS_PACKAGE
+        }?.serviceInfo
+        if (ttsBundled != null) {
+            val component = ComponentName(ttsBundled.packageName, ttsBundled.name)
+            Log.d("Haq/STT", "Using GoogleTTS-bundled STT service: $component")
+            return component
+        }
+
+        // Last resort: any google-named service (e.g. AiAi). Only reaches here if
+        // the TTS-bundled service is also absent.
         val googleFallback = allServices.firstOrNull { info ->
             info.serviceInfo?.packageName?.contains("google", ignoreCase = true) == true
         }?.serviceInfo
         if (googleFallback != null) {
             val component = ComponentName(googleFallback.packageName, googleFallback.name)
-            Log.d("Haq/STT", "Using Google STT fallback: $component")
+            Log.d("Haq/STT", "Using Google STT last-resort fallback: $component")
             return component
         }
 
-        Log.w("Haq/STT", "Google STT service not found, falling back to default recognizer")
+        Log.w("Haq/STT", "No suitable Google STT service found, using system default")
         return null
     }
 
