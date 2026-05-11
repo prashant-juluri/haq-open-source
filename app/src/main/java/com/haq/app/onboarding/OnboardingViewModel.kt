@@ -187,6 +187,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         voicePollingJob = viewModelScope.launch {
             // Initial trigger — idempotent if voice is already present.
             TTSManager.ensureVoiceDownloading(languageCode)
+            // Seed Google's offline STT model download for this language while the
+            // device is still on WiFi (required to download the Gemma model anyway).
+            // After this one-time seed, EXTRA_PREFER_OFFLINE=true will use the
+            // on-device model — matching the same lazy-download pattern as TTS voices.
+            STTManager.seedOfflineModelDownload(getApplication(), languageCode)
 
             // Counter of 5 s cycles to wait before the next testSpeak() call.
             // 0 = test immediately, N > 0 = wait N more cycles.

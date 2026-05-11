@@ -30,6 +30,68 @@ object STTManager {
     fun isAvailable(context: Context): Boolean =
         SpeechRecognizer.isRecognitionAvailable(context)
 
+    /**
+     * Seeds Google's offline speech model download for [languageCode].
+     * Called once during onboarding (PreparingVoices) while the device is
+     * on WiFi. Creates a recognizer, starts listening with EXTRA_PREFER_OFFLINE=true
+     * and the target language, then cancels after 500 ms. The recognizer will
+     * return an error (no audio) but the service connection signals Google to
+     * begin the background offline model download — identical to how TTS lazy-
+     * downloads voice packs on first speak(). Safe to call on any thread.
+     */
+    fun seedOfflineModelDownload(context: Context, languageCode: String) {
+        val ctx = context.applicationContext
+        val bcp47 = when (languageCode) {
+            "hi" -> "hi-IN"
+            "te" -> "te-IN"
+            "ml" -> "ml-IN"
+            "kn" -> "kn-IN"
+            "en" -> "en-IN"
+            else -> languageCode
+        }
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val preferredService = preferredRecognitionService(ctx)
+                val seeder = if (preferredService != null) {
+                    SpeechRecognizer.createSpeechRecognizer(ctx, preferredService)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(ctx)
+                }
+                val noopListener = object : RecognitionListener {
+                    override fun onReadyForSpeech(p: Bundle?) {}
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(r: Float) {}
+                    override fun onBufferReceived(b: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onPartialResults(r: Bundle?) {}
+                    override fun onEvent(t: Int, p: Bundle?) {}
+                    override fun onResults(r: Bundle?) { seeder.destroy() }
+                    override fun onError(e: Int) { seeder.destroy() }
+                }
+                seeder.setRecognitionListener(noopListener)
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                        RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, bcp47)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, bcp47)
+                    putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
+                }
+                seeder.startListening(intent)
+                // Stop after 500 ms — the service binding that triggers the download
+                // happens during startListening(); we don't need audio.
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try { seeder.stopListening() } catch (_: Exception) {}
+                    try { seeder.destroy() }      catch (_: Exception) {}
+                }, 500L)
+                Log.d("Haq/STT", "seedOfflineModelDownload: triggered for $bcp47")
+            } catch (e: Exception) {
+                Log.w("Haq/STT", "seedOfflineModelDownload failed: ${e.message}")
+            }
+        }
+    }
+
     private fun preferredRecognitionService(context: Context): ComponentName? {
         val services = context.packageManager.queryIntentServices(
             Intent(RecognitionService.SERVICE_INTERFACE).setPackage(GOOGLE_STT_PACKAGE),
@@ -153,7 +215,7 @@ object STTManager {
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                         RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
