@@ -131,6 +131,12 @@ object STTManager {
                     }
                     override fun onError(error: Int) {
                         Log.e("Haq/STT", "Error: $error")
+                        // stopListening() before destroy() so the service cancels the
+                        // active session before we release the binding. Without this,
+                        // destroy() initiates cleanup asynchronously and the service
+                        // remains "busy" for ~1-2 s, causing ERROR_RECOGNIZER_BUSY (12)
+                        // on the next attempt.
+                        try { freshRecognizer.stopListening() } catch (_: Exception) {}
                         freshRecognizer.destroy()
                         recognizer = null
                         if (continuation.isActive) continuation.resumeWithException(

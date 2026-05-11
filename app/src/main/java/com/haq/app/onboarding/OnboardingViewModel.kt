@@ -894,7 +894,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         onOutputError = { /* voice unavailable — silent, wait for tap */ },
                     )
                 } else {
-                    delay(500L)
+                    // ERROR_RECOGNIZER_BUSY (12): previous recognizer's service binding
+                    // hasn't fully released yet. Wait 2 s to let cleanup complete before
+                    // creating a new recognizer; 500 ms is insufficient.
+                    val isRecognizerBusy = e.message?.endsWith("12") == true
+                    delay(if (isRecognizerBusy) 2000L else 500L)
                     onMicPressed()
                 }
             }
