@@ -236,13 +236,12 @@ object STTManager {
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                         RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    // Onboarding: always online (WiFi required to download Gemma model).
-                    // Main app: prefer offline so the mic works in airplane mode once
-                    // the Google STT offline model has been downloaded. With Google's
-                    // recognizer explicitly bound (via the manifest <queries> fix),
-                    // prefer-offline falls back to online gracefully when the model
-                    // isn't downloaded yet and triggers a background download.
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, !isOnboarding)
+                    // Do NOT set EXTRA_PREFER_OFFLINE=true. The recognizer on this
+                    // class of device is AiAiSpeechRecognitionService (Android System
+                    // Intelligence) which is fully on-device and returns
+                    // ERROR_LANGUAGE_NOT_SUPPORTED (12) when the flag is set to true.
+                    // AiAi works offline by default — the flag is irrelevant to it.
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
