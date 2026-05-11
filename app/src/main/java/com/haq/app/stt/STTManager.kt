@@ -159,7 +159,11 @@ object STTManager {
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                         RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    // Onboarding always has WiFi (model download requires it), so use
+                    // the online recognizer for reliability. Post-onboarding (main app)
+                    // prefers offline so the mic works in airplane mode once the offline
+                    // model has been lazily downloaded during first online use.
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, !isOnboarding)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
