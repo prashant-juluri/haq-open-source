@@ -3,14 +3,18 @@ package com.haq.app.stt
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognitionService
+import android.speech.RecognitionSupport
+import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -29,6 +33,62 @@ object STTManager {
 
     fun isAvailable(context: Context): Boolean =
         SpeechRecognizer.isRecognitionAvailable(context)
+
+    /**
+     * On API 33+, proactively triggers download of the on-device speech
+     * recognition model for [languageCode]. Called once during onboarding
+     * (PreparingVoices) while the device has WiFi. On API 29-32 there is
+     * no programmatic download API — the implicit download via
+     * EXTRA_PREFER_OFFLINE=true on first main-app use handles those devices.
+     */
+    fun triggerOfflineModelDownload(context: Context, languageCode: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return  // API 33+
+        val ctx = context.applicationContext
+        val bcp47 = toBcp47(languageCode)
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val preferredService = preferredRecognitionService(ctx)
+                val recognizerForDownload = if (preferredService != null) {
+                    SpeechRecognizer.createSpeechRecognizer(ctx, preferredService)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(ctx)
+                }
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, bcp47)
+                }
+                recognizerForDownload.checkRecognitionSupport(
+                    intent,
+                    Executors.newSingleThreadExecutor(),
+                    object : RecognitionSupportCallback {
+                        override fun onSupportResult(recognitionSupport: RecognitionSupport) {
+                            val installed = recognitionSupport.installedOnDeviceLanguages
+                            val supported = recognitionSupport.supportedOnDeviceLanguages
+                            Log.d("Haq/STT",
+                                "triggerOfflineModelDownload: $bcp47 " +
+                                "installed=$installed supported=$supported")
+                            if (bcp47 !in installed && bcp47 in supported) {
+                                recognizerForDownload.triggerModelDownload(intent)
+                                Log.d("Haq/STT", "triggerModelDownload() called for $bcp47")
+                            } else {
+                                Log.d("Haq/STT",
+                                    "triggerOfflineModelDownload: skipped " +
+                                    "(installed=${ bcp47 in installed }, " +
+                                    "supported=${ bcp47 in supported })")
+                            }
+                            recognizerForDownload.destroy()
+                        }
+                        override fun onError(error: Int) {
+                            Log.w("Haq/STT",
+                                "checkRecognitionSupport error $error for $bcp47")
+                            recognizerForDownload.destroy()
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Log.w("Haq/STT", "triggerOfflineModelDownload failed: ${e.message}")
+            }
+        }
+    }
 
     private fun preferredRecognitionService(context: Context): ComponentName? {
         val services = context.packageManager.queryIntentServices(
@@ -88,15 +148,7 @@ object STTManager {
 
         // Map two-letter codes to BCP-47; already-formatted tags pass through.
         // null → no language extra → device auto-detects.
-        val bcp47: String? = when (languageTag) {
-            null -> null
-            "hi" -> "hi-IN"
-            "te" -> "te-IN"
-            "ml" -> "ml-IN"
-            "kn" -> "kn-IN"
-            "en" -> "en-IN"
-            else -> languageTag
-        }
+        val bcp47: String? = languageTag?.let { toBcp47(it) }
 
         return suspendCancellableCoroutine { continuation ->
             // Post the entire recognizer lifecycle to the main thread.
@@ -159,7 +211,13 @@ object STTManager {
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                         RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+                    // Onboarding: always online (WiFi required to download Gemma model).
+                    // Main app: prefer offline so the mic works in airplane mode once
+                    // the Google STT offline model has been downloaded. With Google's
+                    // recognizer explicitly bound (via the manifest <queries> fix),
+                    // prefer-offline falls back to online gracefully when the model
+                    // isn't downloaded yet and triggers a background download.
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, !isOnboarding)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
@@ -188,5 +246,22 @@ object STTManager {
                 }
             }
         }
+    }
+
+    /** Maps two-letter language codes to BCP-47 tags for SpeechRecognizer. */
+    private fun toBcp47(languageCode: String): String = when (languageCode) {
+        "hi" -> "hi-IN"
+        "te" -> "te-IN"
+        "ml" -> "ml-IN"
+        "kn" -> "kn-IN"
+        "ta" -> "ta-IN"
+        "bn" -> "bn-IN"
+        "gu" -> "gu-IN"
+        "mr" -> "mr-IN"
+        "or" -> "or-IN"
+        "as" -> "as-IN"
+        "ne" -> "ne-IN"
+        "en" -> "en-IN"
+        else -> languageCode
     }
 }

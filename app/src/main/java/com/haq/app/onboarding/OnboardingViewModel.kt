@@ -187,6 +187,12 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         voicePollingJob = viewModelScope.launch {
             // Initial trigger — idempotent if voice is already present.
             TTSManager.ensureVoiceDownloading(languageCode)
+            // API 33+: proactively download the on-device STT model for this
+            // language while the device has WiFi. On API 29-32 the implicit
+            // download via EXTRA_PREFER_OFFLINE=true on first main-app use
+            // handles those devices (Google's recognizer queues the download
+            // when it can't find a local model but has network access).
+            STTManager.triggerOfflineModelDownload(getApplication(), languageCode)
 
             // Counter of 5 s cycles to wait before the next testSpeak() call.
             // 0 = test immediately, N > 0 = wait N more cycles.
