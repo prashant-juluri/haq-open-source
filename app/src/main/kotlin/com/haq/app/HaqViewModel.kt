@@ -252,14 +252,6 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 Log.e("Haq/STT", "Recognition error: ${e.message}")
-                // Error code 4 = NETWORK_ERROR: offline model not yet downloaded,
-                // requires network for first-time use. Show a language-aware hint.
-                val errorCode = e.message
-                    ?.removePrefix("Speech recognition error code ")
-                    ?.trim()?.toIntOrNull()
-                if (errorCode == 4 || errorCode == 6) {
-                    _responseText.value = sttOfflineNotReadyMessage(_activeLanguage.value)
-                }
                 _appState.value = AppState.READY
             }
         }
@@ -564,27 +556,6 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 },
             )
         }
-    }
-
-    /**
-     * Shown when SpeechRecognizer returns NETWORK_ERROR (4) or CLIENT_ERROR (6)
-     * in airplane mode — the offline speech model hasn't been downloaded yet.
-     * The user needs to reconnect once to seed the download, after which
-     * EXTRA_PREFER_OFFLINE=true will use the on-device model.
-     */
-    private fun sttOfflineNotReadyMessage(langCode: String): String = when (langCode) {
-        "hi" -> "पहली बार आवाज़ पहचान के लिए इंटरनेट चाहिए। एक बार वाई-फाई से जोड़ें, फिर ऑफलाइन काम करेगा।"
-        "te" -> "మొదటిసారి మాట్లాడటానికి ఇంటర్నెట్ అవసరం. ఒక్కసారి Wi-Fi కి కనెక్ట్ చేయండి, తర్వాత ఆఫ్‌లైన్‌లో పని చేస్తుంది."
-        "ml" -> "ആദ്യ ഉപയോഗത്തിന് ഇന്റർനെറ്റ് ആവശ്യമാണ്. ഒരിക്കൽ Wi-Fi-ൽ ബന്ധിപ്പിക്കുക, പിന്നീട് ഓഫ്‌ലൈനിൽ പ്രവർത്തിക്കും."
-        "kn" -> "ಮೊದಲ ಬಾರಿ ಧ್ವನಿ ಗುರುತಿಸಲು ಇಂಟರ್ನೆಟ್ ಬೇಕು. ಒಮ್ಮೆ Wi-Fi ಗೆ ಸಂಪರ್ಕಿಸಿ, ನಂತರ ಆಫ್‌ಲೈನ್‌ನಲ್ಲಿ ಕಾರ್ಯನಿರ್ವಹಿಸುತ್ತದೆ."
-        "ta" -> "முதல் முறை பேச இணையம் தேவை. ஒரு முறை Wi-Fi இல் இணைக்கவும், பிறகு ஆஃப்லைனில் செயல்படும்."
-        "bn" -> "প্রথমবার কথা বলার জন্য ইন্টারনেট দরকার। একবার Wi-Fi এ সংযুক্ত করুন, তারপর অফলাইনে কাজ করবে।"
-        "gu" -> "પ્રથમ વખત બોલવા માટે ઇન્ટરનેટ જરૂરી છે. એકવાર Wi-Fi સાથે જોડો, પછી ઑફલાઇન કામ કરશે."
-        "mr" -> "पहिल्यांदा बोलण्यासाठी इंटरनेट लागते. एकदा Wi-Fi ला जोडा, नंतर ऑफलाइन काम करेल."
-        "or" -> "ପ୍ରଥମ ଥର ଭାଷଣ ପାଇଁ ଇଣ୍ଟର୍ନେଟ୍ ଦରକାର। ଥରେ Wi-Fi ସଂଯୋଗ କରନ୍ତୁ, ପରେ ଅଫଲାଇନରେ କାମ ହେବ।"
-        "as" -> "প্ৰথমবাৰ কথা কওঁতে ইণ্টাৰনেট লাগে। এবাৰ Wi-Fi ত সংযোগ কৰক, তাৰপিছত অফলাইনত কাম কৰিব।"
-        "ne" -> "पहिलो पटक बोल्न इन्टरनेट चाहिन्छ। एकपटक Wi-Fi मा जोड्नुस्, त्यसपछि अफलाइनमा काम गर्छ।"
-        else -> "Speech recognition needs internet the first time. Connect to Wi-Fi once and it will work offline after that."
     }
 
     /** Language-aware message shown when both the primary and retry queries fail. */
