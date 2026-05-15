@@ -234,7 +234,8 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
     val activeProfile  by haqVm.activeProfileName.collectAsStateWithLifecycle()
     val activeLanguage by haqVm.activeLanguage.collectAsStateWithLifecycle()
     val profiles       by haqVm.getAllProfiles().collectAsStateWithLifecycle(emptyList())
-    val noWifiForMic   by haqVm.noWifiForMic.collectAsStateWithLifecycle()
+    val noWifiForMic    by haqVm.noWifiForMic.collectAsStateWithLifecycle()
+    val ttsUnavailable  by haqVm.ttsUnavailable.collectAsStateWithLifecycle()
 
     if (noWifiForMic) {
         AlertDialog(
@@ -284,6 +285,7 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
                     responseText      = responseText,
                     activeProfileName = activeProfile,
                     profiles          = profiles,
+                    ttsUnavailable    = ttsUnavailable,
                     onMicTap          = { haqVm.onMicButtonPressed() },
                     onPauseTap        = { haqVm.resetToIdle() },
                     onSwitchProfile   = { profileId ->
@@ -334,11 +336,7 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
             onRetry  = { vm.retryAfterWifi() },
             onBack   = { vm.resetToLanguageSelect() },
         )
-        is OnboardingStep.InstallingVoicePacks -> InstallingVoicePacksScreen(
-            language   = vm.selectedLanguage,
-            attempt    = 0,
-            onContinue = { vm.onVoicePackInstalled() },
-        )
+        is OnboardingStep.InstallingVoicePacks -> PreparingVoicesScreen(status = preparingStatus)
         else -> ConversationOnboardingScreen(step, vm, listenState)
     }
 }
@@ -485,7 +483,7 @@ private fun NoWifiScreen(onRetry: () -> Unit, onBack: () -> Unit) {
         )
         Spacer(Modifier.height(24.dp))
         Text(
-            text = "WiFi required",
+            text = "Stay connected to WiFi",
             fontSize = 22.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground,
@@ -493,7 +491,7 @@ private fun NoWifiScreen(onRetry: () -> Unit, onBack: () -> Unit) {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "This language needs an internet connection for voice recognition. Please enable WiFi and try again.",
+            text = "Haq needs WiFi to finish setting up your language. This only happens once.",
             fontSize = 14.sp,
             color = HaqMuted,
             textAlign = TextAlign.Center,
@@ -793,6 +791,7 @@ private fun MainAppContent(
     responseText: String,
     activeProfileName: String,
     profiles: List<UserProfile>,
+    ttsUnavailable: Boolean,
     onMicTap: () -> Unit,
     onPauseTap: () -> Unit,
     onSwitchProfile: (Int) -> Unit,
@@ -855,6 +854,18 @@ private fun MainAppContent(
             ResponseCard(
                 text = responseText,
                 modifier = Modifier.weight(1f),
+            )
+        }
+
+        // ── TTS unavailable banner — shown when voice is offline/not installed ──
+        if (ttsUnavailable) {
+            Text(
+                text = "🔇 Voice unavailable offline — connect to WiFi to enable voice",
+                fontSize = 12.sp,
+                color = HaqMuted,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
             )
         }
 

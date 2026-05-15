@@ -120,6 +120,9 @@ dependencies {
     // ── Biometric (PIN + face fallback) ─────────────────────────────────────
     implementation("androidx.biometric:biometric:1.1.0")
 
+    // ── ONNX Runtime — Whisper encoder/decoder inference (on-device) ─────────
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+
     // ── OkHttp — one-time model download over WiFi ───────────────────────────
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

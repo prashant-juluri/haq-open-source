@@ -19,13 +19,16 @@ Tagline: Your rights. Your language. No middleman.
 ## Tech stack
 - Language: Kotlin + Jetpack Compose
 - Model: Gemma 4 E2B via LiteRT-LM (on-device, offline)
-- STT: Android SpeechRecognizer with language-aware routing:
+- STT: Three-tier language-aware routing:
   - AiAi (`com.google.android.as`): en-IN (offline, pre-installed) and
     hi-IN (offline, downloads silently on first WiFi launch via `triggerModelDownload`)
-  - GoogleTTSRecognitionService: all other Indian languages (WiFi required for STT only)
+  - Whisper-tiny ONNX (via ONNX Runtime Android): te, ml, kn, ta, bn, gu, mr, ne —
+    fully offline, bypasses SpeechRecognizer entirely; uses AudioRecorder + VAD
+  - GoogleTTSRecognitionService: or, as only (Odia/Assamese — not in Whisper's 99 languages;
+    WiFi required for these two)
   - Onboarding always passes null language tag → AiAi auto-detect, fully offline
   - WiFi prompt shown in onboarding (`NoWifi` step) and main app (AlertDialog)
-    when device is offline and the profile language needs network STT
+    only for or/as; all other languages are offline-capable
 - TTS: Android TTS API (Google TTS engine preferred explicitly)
 - Storage: SQLite via Room
 - Vector search: sqlite-vec
@@ -146,19 +149,37 @@ Prompt API / AICore without touching any other code.
 Never call LiteRT APIs directly from ViewModel or UI layer.
 
 ## Current build stage
-WEEK 3 COMPLETE — Full voice pipeline with language-aware STT routing:
+WEEK 4 IN PROGRESS — Whisper ONNX offline STT for 8 Indian languages:
 - AiAi on-device STT: en-IN (pre-installed), hi-IN (downloads on first WiFi launch)
-- GoogleTTSRecognitionService: network path for te, ml, kn, ta, bn, gu, mr, or, as, ne
-- WiFi-required prompt: NoWifi step in onboarding, AlertDialog in main app
+- Whisper-tiny ONNX: te, ml, kn, ta, bn, gu, mr, ne — fully offline, no SpeechRecognizer
+- GoogleTTSRecognitionService: network path for or, as only (not in Whisper's 99 languages)
+- WiFi-required prompt: NoWifi step in onboarding + AlertDialog in main app (or/as only)
 - Onboarding: tap-to-speak complete, language-aware TTS voice selection
 - PreparingVoices gates on Gemma model ready + TTS voice testSpeak passing
 - RAG pipeline working end to end with all three knowledge bases
 
+## Whisper ONNX model delivery
+Files are downloaded lazily on first use of a Whisper language (te/ml/kn/ta/bn/gu/mr/ne).
+Download is triggered automatically during onboarding PreparingVoices and gated — the user
+cannot advance to Introduction until both Whisper files and TTS voices are ready.
+
+If models are missing in the main app (fresh install, data cleared), tapping the mic
+triggers an inline download and shows progress in the response text area. User taps mic
+again once complete.
+
+Source: onnx-community/whisper-tiny on HuggingFace (official ONNX community export)
+  https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/encoder_model.onnx
+  https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/decoder_model_merged.onnx
+  https://huggingface.co/onnx-community/whisper-tiny/resolve/main/tokenizer.json
+
+Sizes: encoder_model.onnx ~31 MB, decoder_model_merged.onnx ~113 MB, tokenizer.json <1 MB
+Total: ~145 MB, downloaded once, stored in filesDir/whisper/, survives app updates
+
 ## Known pending items
 - PreparingVoices does not detect WiFi re-enable while polling — user must
-  kill and relaunch if they enable WiFi while stuck on that screen
-- Whisper ONNX stashed on feat/whisper-offline-stt — post-hackathon path
-  for fully offline STT for Dravidian and other non-AiAi languages
+  kill and relaunch if they enable WiFi while stuck on that screen (or/as only)
+- KV cache tensor names are discovered dynamically — log Decoder inputs/outputs
+  on first launch to verify name conventions match the onnx-community/whisper-tiny export
 
 ## Development Principles
 
