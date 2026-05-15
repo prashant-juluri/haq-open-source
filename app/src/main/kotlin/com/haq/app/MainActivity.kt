@@ -52,6 +52,8 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,8 +65,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -230,6 +234,28 @@ private fun MainAppFlow(haqVm: HaqViewModel, onboardingVm: OnboardingViewModel) 
     val activeProfile  by haqVm.activeProfileName.collectAsStateWithLifecycle()
     val activeLanguage by haqVm.activeLanguage.collectAsStateWithLifecycle()
     val profiles       by haqVm.getAllProfiles().collectAsStateWithLifecycle(emptyList())
+    val noWifiForMic   by haqVm.noWifiForMic.collectAsStateWithLifecycle()
+
+    if (noWifiForMic) {
+        AlertDialog(
+            onDismissRequest = { haqVm.dismissNoWifi() },
+            icon = { Icon(Icons.Filled.WifiOff, contentDescription = null, tint = HaqMuted) },
+            title = { Text("WiFi required") },
+            text  = {
+                Text(
+                    "Voice recognition for this language needs an internet connection. " +
+                    "Please enable WiFi and try again.",
+                    fontSize = 14.sp,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { haqVm.dismissNoWifi() },
+                    colors = ButtonDefaults.buttonColors(containerColor = HaqGreen),
+                ) { Text("OK") }
+            },
+        )
+    }
 
     // Load the active profile once on entry so language + system prompt are ready.
     LaunchedEffect(Unit) {
@@ -303,6 +329,10 @@ private fun OnboardingScreen(vm: OnboardingViewModel, onComplete: () -> Unit) {
         is OnboardingStep.LanguageSelect  -> LanguageSelectScreen(
             supportedLanguages = supportedLanguages,
             onSelect           = { vm.selectLanguage(it) },
+        )
+        is OnboardingStep.NoWifi -> NoWifiScreen(
+            onRetry  = { vm.retryAfterWifi() },
+            onBack   = { vm.resetToLanguageSelect() },
         )
         is OnboardingStep.InstallingVoicePacks -> InstallingVoicePacksScreen(
             language   = vm.selectedLanguage,
@@ -430,6 +460,59 @@ private fun LanguageButton(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(script, fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
             Text(name,   fontSize = 11.sp, color = HaqMuted)
+        }
+    }
+}
+
+// ── No WiFi screen (onboarding) ───────────────────────────────────────────────
+
+@Composable
+private fun NoWifiScreen(onRetry: () -> Unit, onBack: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.WifiOff,
+            contentDescription = null,
+            tint = HaqMuted,
+            modifier = Modifier.size(64.dp),
+        )
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "WiFi required",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "This language needs an internet connection for voice recognition. Please enable WiFi and try again.",
+            fontSize = 14.sp,
+            color = HaqMuted,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp,
+        )
+        Spacer(Modifier.height(36.dp))
+        Button(
+            onClick = onRetry,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = HaqGreen),
+        ) {
+            Text("Retry", fontSize = 16.sp)
+        }
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Choose another language", fontSize = 14.sp)
         }
     }
 }

@@ -3,6 +3,8 @@ package com.haq.app.stt
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -29,6 +31,19 @@ object STTManager {
     // triggerModelDownload). All other languages skip AiAi and fall through to
     // googlequicksearchbox with network.
     private val AIAI_CAPABLE = setOf("en-IN", "hi-IN")
+
+    /** Returns true when [languageCode] needs a network connection for STT. */
+    fun requiresNetwork(languageCode: String): Boolean = toBcp47(languageCode) !in AIAI_CAPABLE
+
+    /**
+     * Returns true when the device has an active internet-capable network.
+     * Uses [NetworkCapabilities] (API 29+, matching our minSdk).
+     */
+    fun isNetworkAvailable(context: Context): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
 
     // Application context stored on first call — avoids threading issues
     // with Activity contexts and survives configuration changes.

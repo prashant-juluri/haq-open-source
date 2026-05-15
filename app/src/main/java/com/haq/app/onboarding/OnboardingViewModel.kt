@@ -21,6 +21,7 @@ import kotlin.coroutines.resume
 sealed class OnboardingStep {
     object PreparingVoices       : OnboardingStep()  // pre-onboarding voice readiness gate
     object LanguageSelect        : OnboardingStep()
+    object NoWifi                : OnboardingStep()  // selected language needs network but offline
     object Introduction          : OnboardingStep()
     object AskName               : OnboardingStep()
     object AskState              : OnboardingStep()
@@ -564,12 +565,32 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun selectLanguage(language: String) {
         selectedLanguage = language
+        if (STTManager.requiresNetwork(language) && !STTManager.isNetworkAvailable(getApplication())) {
+            Log.d("Haq/Onboard", "selectLanguage: lang=$language requires network but offline — showing NoWifi")
+            _step.value = OnboardingStep.NoWifi
+            return
+        }
         Log.d("Haq/Onboard", "selectLanguage: lang=$language — starting single-language readiness gate")
         _step.value = OnboardingStep.PreparingVoices
-        // One-shot diagnostic: dump AiAi's full installed/supported language
-        // lists to logcat so we can determine if Indian languages are downloadable.
         STTManager.logAiAiSupportedLanguages(getApplication())
         startSingleLanguageReadinessPolling(language)
+    }
+
+    fun resetToLanguageSelect() {
+        voicePollingJob?.cancel()
+        _step.value = OnboardingStep.LanguageSelect
+    }
+
+    /** Called when the user taps Retry on the NoWifi screen. Re-checks connectivity. */
+    fun retryAfterWifi() {
+        if (STTManager.requiresNetwork(selectedLanguage) && !STTManager.isNetworkAvailable(getApplication())) {
+            Log.d("Haq/Onboard", "retryAfterWifi: still offline for $selectedLanguage")
+            return  // stay on NoWifi screen
+        }
+        Log.d("Haq/Onboard", "retryAfterWifi: network available — proceeding with $selectedLanguage")
+        _step.value = OnboardingStep.PreparingVoices
+        STTManager.logAiAiSupportedLanguages(getApplication())
+        startSingleLanguageReadinessPolling(selectedLanguage)
     }
 
     fun onIntroductionComplete() {
