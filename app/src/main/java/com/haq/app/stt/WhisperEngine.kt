@@ -279,17 +279,13 @@ class WhisperEngine(private val context: Context) {
                 val v = result.get(outName)
                 if (!v.isPresent) { Log.w(TAG, "KV '$outName' absent"); continue }
 
-                val tensor = v.get() as? OnnxTensor ?: run {
-                    Log.w(TAG, "KV '$outName' not an OnnxTensor"); continue
-                }
+                val tensor = v.get() as? OnnxTensor
+                if (tensor == null) { Log.w(TAG, "KV '$outName' not an OnnxTensor"); continue }
 
                 // tensor.info is null for outputs from conditional branches that weren't taken
                 // (ORT Android returns a placeholder OnnxTensor with no metadata in that case).
-                val info = tensor.info ?: run {
-                    // Silently skip — this is expected for encoder KV on use_cache_branch=true
-                    // and for decoder KV on use_cache_branch=false.
-                    continue
-                }
+                // Silently skip — expected for encoder KV on use_cache_branch=true.
+                val info = tensor.info ?: continue
 
                 val shape = info.shape   // [1, heads, seq, dim]
                 if (shape.size < 4) { Log.w(TAG, "KV '$outName' bad rank ${shape.size}"); continue }
@@ -310,9 +306,8 @@ class WhisperEngine(private val context: Context) {
                 if (fb != null) {
                     fb.get(flat)
                 } else {
-                    val bb = tensor.byteBuffer ?: run {
-                        Log.w(TAG, "KV '$outName' both floatBuffer and byteBuffer null"); continue
-                    }
+                    val bb = tensor.byteBuffer
+                    if (bb == null) { Log.w(TAG, "KV '$outName' both floatBuffer and byteBuffer null"); continue }
                     bb.asFloatBuffer().get(flat)
                 }
 
