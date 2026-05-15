@@ -287,7 +287,10 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 val transcript = STTManager.recordAndTranscribe(
                     context = getApplication(),
                     languageTag = langTag,
-                    onVadComplete = { _appState.value = AppState.THINKING },
+                    onVadComplete = {
+                        _appState.value = AppState.THINKING
+                        _responseText.value = ""
+                    },
                 )
                 Log.d("Haq/STT", "Transcript: \"$transcript\"")
                 if (transcript.isNotBlank()) {
