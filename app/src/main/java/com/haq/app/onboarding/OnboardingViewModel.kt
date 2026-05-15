@@ -261,10 +261,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         testSpeakFailures  = 0
                         voiceMissingCycles++
 
-                        // Voice still missing after threshold: if offline, send user back to
-                        // the WiFi screen so they can connect and let the download proceed.
-                        // If online, keep waiting silently — the download is in progress.
-                        if (voiceMissingCycles >= escapeAfterFailures &&
+                        // Voice still missing: if offline, send user to the WiFi screen
+                        // after 2 cycles (~10 s) — enough time for TTS to initialise
+                        // but fast enough to give clear feedback.
+                        // If online, keep waiting — the download is in progress.
+                        if (voiceMissingCycles >= 2 &&
                             _step.value is OnboardingStep.PreparingVoices) {
                             if (!STTManager.isNetworkAvailable(getApplication())) {
                                 Log.w("Haq/Onboard",

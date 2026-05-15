@@ -355,11 +355,12 @@ object STTManager {
     suspend fun recordAndTranscribe(
         context: Context,
         languageTag: String? = null,
+        onVadComplete: (() -> Unit)? = null,
     ): String {
         appContext = context.applicationContext
         val twoLetter = languageTag?.let { toTwoLetter(it) }
         if (twoLetter != null && twoLetter in WHISPER_LANGUAGES) {
-            return transcribeWithWhisper(context.applicationContext, twoLetter)
+            return transcribeWithWhisper(context.applicationContext, twoLetter, onVadComplete)
         }
         return recordAndTranscribeWithLanguage(languageTag = languageTag, isOnboarding = false)
     }
@@ -371,7 +372,11 @@ object STTManager {
      * Initialises [WhisperEngine] lazily on first call (~1-2 s overhead once).
      * If model files are not present, throws so the caller can surface an error.
      */
-    private suspend fun transcribeWithWhisper(context: Context, langCode: String): String {
+    private suspend fun transcribeWithWhisper(
+        context: Context,
+        langCode: String,
+        onVadComplete: (() -> Unit)? = null,
+    ): String {
         if (!WhisperEngine.isAvailable(context)) {
             throw IllegalStateException(
                 "Whisper models not found in filesDir/whisper/ — " +
@@ -385,6 +390,9 @@ object STTManager {
         val recorder = AudioRecorder()
         val samples  = recorder.recordWithVad()
         if (samples.isEmpty()) return ""
+        // VAD complete — recording stopped, inference about to start.
+        // Signal caller so UI can transition from LISTENING to PROCESSING.
+        onVadComplete?.invoke()
         return engine.transcribe(samples, WhisperConfig.languageToken(langCode))
     }
 

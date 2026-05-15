@@ -483,7 +483,7 @@ private fun NoWifiScreen(onRetry: () -> Unit, onBack: () -> Unit) {
         )
         Spacer(Modifier.height(24.dp))
         Text(
-            text = "Stay connected to WiFi",
+            text = "WiFi needed for setup",
             fontSize = 22.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground,
@@ -491,7 +491,7 @@ private fun NoWifiScreen(onRetry: () -> Unit, onBack: () -> Unit) {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Haq needs WiFi to finish setting up your language. This only happens once.",
+            text = "Haq needs WiFi to set up your language for the first time. You can turn it off once setup is complete — everything runs offline after that.",
             fontSize = 14.sp,
             color = HaqMuted,
             textAlign = TextAlign.Center,

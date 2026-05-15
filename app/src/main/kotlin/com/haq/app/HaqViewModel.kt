@@ -284,7 +284,11 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             _appState.value = AppState.LISTENING
             try {
                 Log.d("Haq/VM", "Mic pressed: activeLanguage=$langTag profile=${activeProfile?.name}")
-                val transcript = STTManager.recordAndTranscribe(getApplication(), langTag)
+                val transcript = STTManager.recordAndTranscribe(
+                    context = getApplication(),
+                    languageTag = langTag,
+                    onVadComplete = { _appState.value = AppState.THINKING },
+                )
                 Log.d("Haq/STT", "Transcript: \"$transcript\"")
                 if (transcript.isNotBlank()) {
                     submitQuery(transcript)
