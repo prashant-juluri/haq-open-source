@@ -368,9 +368,6 @@ private fun LanguageSelectScreen(
         Triple("ne", "नेपाली", "Nepali"),
         Triple("en", "English", "English"),
     )
-    // Filter to languages confirmed available on this device.
-    val visible = allLanguages.filter { (code, _, _) -> code in supportedLanguages }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -395,8 +392,8 @@ private fun LanguageSelectScreen(
         )
         Spacer(Modifier.height(40.dp))
 
-        // Render up to 3 languages per row; pad shorter rows with Spacers so
-        // buttons stay equal-width regardless of how many are supported.
+        // Filter to languages confirmed available on this device.
+        val visible = allLanguages.filter { (code, _, _) -> code in supportedLanguages }
         visible.chunked(3).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -404,9 +401,9 @@ private fun LanguageSelectScreen(
             ) {
                 row.forEach { (code, script, name) ->
                     LanguageButton(
-                        script = script,
-                        name = name,
-                        onClick = { onSelect(code) },
+                        script   = script,
+                        name     = name,
+                        onClick  = { onSelect(code) },
                         modifier = Modifier.weight(1f),
                     )
                 }

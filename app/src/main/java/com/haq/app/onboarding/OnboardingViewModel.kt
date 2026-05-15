@@ -566,6 +566,9 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         selectedLanguage = language
         Log.d("Haq/Onboard", "selectLanguage: lang=$language — starting single-language readiness gate")
         _step.value = OnboardingStep.PreparingVoices
+        // One-shot diagnostic: dump AiAi's full installed/supported language
+        // lists to logcat so we can determine if Indian languages are downloadable.
+        STTManager.logAiAiSupportedLanguages(getApplication())
         startSingleLanguageReadinessPolling(language)
     }
 

@@ -23,11 +23,12 @@ object STTManager {
 
     private const val GOOGLE_STT_PACKAGE = "com.google.android.googlequicksearchbox"
     private const val GOOGLE_TTS_PACKAGE  = "com.google.android.tts"
-    // Android System Intelligence — on-device by design, no network required.
-    // Testing whether it accepts Indian language tags (hi-IN, ta-IN, etc.);
-    // previous assumption was that it rejected non-English tags but this was
-    // never verified. Trying as first preference for offline capability.
     private const val AIAI_PACKAGE        = "com.google.android.as"
+
+    // BCP-47 tags that AiAi handles on-device (installed or downloadable via
+    // triggerModelDownload). All other languages skip AiAi and fall through to
+    // googlequicksearchbox with network.
+    private val AIAI_CAPABLE = setOf("en-IN", "hi-IN")
 
     // Application context stored on first call — avoids threading issues
     // with Activity contexts and survives configuration changes.
@@ -60,7 +61,7 @@ object STTManager {
         return suspendCancellableCoroutine { continuation ->
             Handler(Looper.getMainLooper()).post {
                 try {
-                    val preferredService = preferredRecognitionService(ctx).component
+                    val preferredService = preferredRecognitionService(ctx, bcp47).component
                     val recognizer = if (preferredService != null) {
                         SpeechRecognizer.createSpeechRecognizer(ctx, preferredService)
                     } else {
@@ -119,7 +120,9 @@ object STTManager {
         val bcp47 = toBcp47(languageCode)
         Handler(Looper.getMainLooper()).post {
             try {
-                val preferredService = preferredRecognitionService(ctx).component
+                val serviceResult = preferredRecognitionService(ctx, bcp47)
+                val preferredService = serviceResult.component
+                Log.d("Haq/STT", "triggerOfflineModelDownload: querying service=$preferredService for $bcp47")
                 val recognizerForDownload = if (preferredService != null) {
                     SpeechRecognizer.createSpeechRecognizer(ctx, preferredService)
                 } else {
@@ -163,20 +166,92 @@ object STTManager {
     }
 
     /**
+     * One-shot diagnostic: queries every target Indian language against the
+     * AiAi service specifically (regardless of [preferredRecognitionService])
+     * and logs the full installed+supported lists. Call once from MainActivity
+     * or onboarding to answer: "can AiAi download Hindi/Telugu/etc. offline?"
+     *
+     * Noop on API < 33 or if AiAi is not installed.
+     */
+    fun logAiAiSupportedLanguages(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val ctx = context.applicationContext
+        val allServices = ctx.packageManager.queryIntentServices(
+            Intent(RecognitionService.SERVICE_INTERFACE), 0)
+        val aiaiService = allServices.firstOrNull { info ->
+            info.serviceInfo?.packageName == AIAI_PACKAGE
+        }?.serviceInfo ?: run {
+            Log.d("Haq/STT", "logAiAiSupportedLanguages: AiAi not installed")
+            return
+        }
+        val aiaiComponent = ComponentName(aiaiService.packageName, aiaiService.name)
+        Log.d("Haq/STT", "logAiAiSupportedLanguages: probing $aiaiComponent")
+
+        // Probe all target languages in one shot using a generic intent —
+        // AiAi returns the same installed/supported lists regardless of the
+        // EXTRA_LANGUAGE value; we use en-IN as a neutral probe language.
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val rec = SpeechRecognizer.createSpeechRecognizer(ctx, aiaiComponent)
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+                }
+                rec.checkRecognitionSupport(
+                    intent,
+                    Executors.newSingleThreadExecutor(),
+                    object : RecognitionSupportCallback {
+                        override fun onSupportResult(support: RecognitionSupport) {
+                            val installed = support.installedOnDeviceLanguages
+                            val supported = support.supportedOnDeviceLanguages
+                            Log.d("Haq/STT",
+                                "AiAi ALL installed languages: $installed")
+                            Log.d("Haq/STT",
+                                "AiAi ALL supported (downloadable) languages: $supported")
+                            val targets = listOf("hi-IN","te-IN","ml-IN","kn-IN",
+                                "ta-IN","bn-IN","gu-IN","mr-IN","en-IN")
+                            targets.forEach { lang ->
+                                val status = when {
+                                    lang in installed -> "INSTALLED (offline ready)"
+                                    lang in supported -> "SUPPORTED (can download)"
+                                    else             -> "NOT SUPPORTED"
+                                }
+                                Log.d("Haq/STT", "AiAi $lang → $status")
+                            }
+                            Handler(Looper.getMainLooper()).post { rec.destroy() }
+                        }
+                        override fun onError(error: Int) {
+                            Log.w("Haq/STT",
+                                "logAiAiSupportedLanguages: checkRecognitionSupport error=$error")
+                            Handler(Looper.getMainLooper()).post { rec.destroy() }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Log.w("Haq/STT", "logAiAiSupportedLanguages failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Whether the selected recognition service supports EXTRA_PREFER_OFFLINE.
-     * GoogleTTSRecognitionService and googlequicksearchbox both have on-device
-     * Indian-language models and honour the flag correctly.
-     * AiAi (com.google.android.as) is already on-device by design and returns
-     * ERROR_RECOGNIZER_BUSY (12) when EXTRA_PREFER_OFFLINE=true is set.
+     * AiAi is on-device by design (flag not needed, causes ERROR_RECOGNIZER_BUSY).
+     * googlequicksearchbox honours the flag for its downloaded on-device models.
+     * GoogleTTSRecognitionService is network-only; flag causes immediate error 12.
      */
     private data class RecognitionServiceResult(
         val component: ComponentName?,
         val supportsPreferOffline: Boolean,
     )
 
-    private fun preferredRecognitionService(context: Context): RecognitionServiceResult {
-        // Log ALL available recognition services once so we can identify
-        // the correct package/component on this device.
+    /**
+     * Returns the best recognition service for [bcp47].
+     *
+     * - null [bcp47]: onboarding auto-detect path — always prefers AiAi (on-device).
+     * - [bcp47] in [AIAI_CAPABLE]: AiAi handles it on-device (installed or downloadable).
+     * - everything else: AiAi is skipped; falls through to googlequicksearchbox
+     *   with network, which supports all Indian language tags.
+     */
+    private fun preferredRecognitionService(context: Context, bcp47: String?): RecognitionServiceResult {
         val allServices = context.packageManager.queryIntentServices(
             Intent(RecognitionService.SERVICE_INTERFACE), 0)
         if (allServices.isEmpty()) {
@@ -189,19 +264,18 @@ object STTManager {
             }
         }
 
-        // P1: AiAi (Android System Intelligence) — on-device, no network required.
-        // Supports English (en-IN) offline seamlessly. Indian language tags get
-        // ERROR_LANGUAGE_NOT_SUPPORTED but English demo works fully offline.
+        // P1: AiAi — on-device, no network. Only for languages it can handle:
+        // null (onboarding auto-detect), en-IN (installed), hi-IN (downloadable).
         val aiaiService = allServices.firstOrNull { info ->
             info.serviceInfo?.packageName == AIAI_PACKAGE
         }?.serviceInfo
-        if (aiaiService != null) {
+        if (aiaiService != null && (bcp47 == null || bcp47 in AIAI_CAPABLE)) {
             val component = ComponentName(aiaiService.packageName, aiaiService.name)
-            Log.d("Haq/STT", "Using AiAi on-device STT service: $component")
+            Log.d("Haq/STT", "Using AiAi on-device STT: $component (lang=$bcp47)")
             return RecognitionServiceResult(component, supportsPreferOffline = false)
         }
 
-        // P2: googlequicksearchbox — supports Indian language tags, network-dependent.
+        // P2: googlequicksearchbox — all Indian language tags, network-dependent.
         val services = context.packageManager.queryIntentServices(
             Intent(RecognitionService.SERVICE_INTERFACE).setPackage(GOOGLE_STT_PACKAGE), 0)
         val googleService = services.firstOrNull { info ->
@@ -209,19 +283,18 @@ object STTManager {
         }?.serviceInfo
         if (googleService != null) {
             val component = ComponentName(googleService.packageName, googleService.name)
-            Log.d("Haq/STT", "Using Google STT service: $component")
-            return RecognitionServiceResult(component, supportsPreferOffline = true)
+            Log.d("Haq/STT", "Using Google STT service (network): $component (lang=$bcp47)")
+            return RecognitionServiceResult(component, supportsPreferOffline = false)
         }
 
-        // P3: GoogleTTSRecognitionService — supports Indian language tags but network-only.
-        // checkRecognitionSupport returns ERROR_CANNOT_CHECK_SUPPORT (14); no offline models.
-        // EXTRA_PREFER_OFFLINE=true causes immediate ERROR_RECOGNIZER_BUSY (12). Use false.
+        // P3: GoogleTTSRecognitionService — network-only fallback.
+        // EXTRA_PREFER_OFFLINE=true causes immediate ERROR_RECOGNIZER_BUSY (12).
         val ttsBundled = allServices.firstOrNull { info ->
             info.serviceInfo?.packageName == GOOGLE_TTS_PACKAGE
         }?.serviceInfo
         if (ttsBundled != null) {
             val component = ComponentName(ttsBundled.packageName, ttsBundled.name)
-            Log.d("Haq/STT", "Using GoogleTTS-bundled STT service: $component")
+            Log.d("Haq/STT", "Using GoogleTTS-bundled STT service (network): $component")
             return RecognitionServiceResult(component, supportsPreferOffline = false)
         }
 
@@ -277,7 +350,7 @@ object STTManager {
                 recognizer?.destroy()
                 recognizer = null
 
-                val serviceResult = preferredRecognitionService(ctx)
+                val serviceResult = preferredRecognitionService(ctx, bcp47)
                 val freshRecognizer = if (serviceResult.component != null) {
                     SpeechRecognizer.createSpeechRecognizer(ctx, serviceResult.component)
                 } else {
