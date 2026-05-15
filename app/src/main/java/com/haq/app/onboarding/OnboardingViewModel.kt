@@ -299,20 +299,19 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                                 "(failure $testSpeakFailures/$escapeAfterFailures) — " +
                                 "download in progress; next check in 30 s")
 
-                            // After ~3 minutes of failed synthesis, if offline send the user
-                            // back to the WiFi screen. If online, reset and keep polling —
-                            // the download is still in progress, no escape hatch shown.
-                            if (testSpeakFailures >= escapeAfterFailures &&
-                                _step.value is OnboardingStep.PreparingVoices) {
+                            // On first testSpeak failure: if offline, the voice requires
+                            // network synthesis data that can't download — send to WiFi
+                            // screen immediately. If online, the data is downloading
+                            // silently; reset and keep polling every 30 s.
+                            if (_step.value is OnboardingStep.PreparingVoices) {
                                 if (!STTManager.isNetworkAvailable(getApplication())) {
                                     Log.w("Haq/Onboard",
-                                        "testSpeak failed $testSpeakFailures times and offline — " +
-                                        "returning to NoWifi screen")
+                                        "testSpeak failed offline — returning to NoWifi screen")
                                     _step.value = OnboardingStep.NoWifi
                                 } else {
                                     Log.d("Haq/Onboard",
-                                        "testSpeak failed $testSpeakFailures times but online — " +
-                                        "staying on PreparingVoices, download in progress")
+                                        "testSpeak failed but online — download in progress, " +
+                                        "next check in 30 s")
                                     testSpeakFailures = 0  // reset so we keep re-checking
                                 }
                             }
