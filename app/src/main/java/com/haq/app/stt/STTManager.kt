@@ -78,14 +78,18 @@ object STTManager {
                                 Log.d("Haq/STT",
                                     "isOfflineModelInstalled: $bcp47 " +
                                     "installed=$installed → ready=$ready")
-                                recognizer.destroy()
+                                // destroy() must run on the main thread — the
+                                // ServiceConnection is bound to the main Looper.
+                                // Calling it from the executor thread fails to
+                                // release the connection, leaving the service busy.
+                                Handler(Looper.getMainLooper()).post { recognizer.destroy() }
                                 if (continuation.isActive) continuation.resume(ready)
                             }
                             override fun onError(error: Int) {
                                 Log.w("Haq/STT",
                                     "isOfflineModelInstalled: checkRecognitionSupport " +
                                     "error=$error for $bcp47 — assuming installed")
-                                recognizer.destroy()
+                                Handler(Looper.getMainLooper()).post { recognizer.destroy() }
                                 if (continuation.isActive) continuation.resume(true)
                             }
                         }
@@ -142,12 +146,12 @@ object STTManager {
                                     "(installed=${ bcp47 in installed }, " +
                                     "supported=${ bcp47 in supported })")
                             }
-                            recognizerForDownload.destroy()
+                            Handler(Looper.getMainLooper()).post { recognizerForDownload.destroy() }
                         }
                         override fun onError(error: Int) {
                             Log.w("Haq/STT",
                                 "checkRecognitionSupport error $error for $bcp47")
-                            recognizerForDownload.destroy()
+                            Handler(Looper.getMainLooper()).post { recognizerForDownload.destroy() }
                         }
                     }
                 )
