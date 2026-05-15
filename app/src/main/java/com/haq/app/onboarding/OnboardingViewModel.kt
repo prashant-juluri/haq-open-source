@@ -124,7 +124,8 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                     Log.d("Haq/Onboard", "TTS data installed but model not ready — poll loop will pick it up")
                     return@launch
                 }
-                if (verifySingleVoiceSpeakable(selectedLanguage)) {
+                val sttReady = STTManager.isOfflineModelInstalled(getApplication(), selectedLanguage)
+                if (verifySingleVoiceSpeakable(selectedLanguage) && sttReady) {
                     voicePollingJob?.cancel()
                     voicePollingJob = null
                     enterIntroduction()
@@ -204,12 +205,14 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             val escapeAfterFailures = 6
 
             while (true) {
-                val modelReady   = GemmaManager.isModelReady(getApplication())
-                val voiceMissing = !TTSManager.checkLanguageSupport(languageCode)
-                updatePreparingStatus(voiceMissing, !modelReady)
+                val modelReady    = GemmaManager.isModelReady(getApplication())
+                val voiceMissing  = !TTSManager.checkLanguageSupport(languageCode)
+                val sttModelReady = STTManager.isOfflineModelInstalled(getApplication(), languageCode)
+                updatePreparingStatus(voiceMissing, !modelReady, !sttModelReady)
                 Log.d("Haq/Onboard",
                     "Single-lang readiness poll: lang=$languageCode " +
                     "modelReady=$modelReady voiceMissing=$voiceMissing " +
+                    "sttModelReady=$sttModelReady " +
                     "testSpeakIn=${testSpeakCountdown * 5}s")
 
                 if (modelReady) {
@@ -227,7 +230,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         // triggered by speak(). We therefore poll here as the only signal.
                         if (testSpeakCountdown <= 0) {
                             testSpeakCountdown = 6  // next check in 6 × 5 s = 30 s
-                            if (verifySingleVoiceSpeakable(languageCode)) {
+                            if (verifySingleVoiceSpeakable(languageCode) && sttModelReady) {
                                 enterIntroduction()
                                 break
                             }
@@ -269,10 +272,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun updatePreparingStatus(voiceMissing: Boolean, modelMissing: Boolean) {
+    private fun updatePreparingStatus(voiceMissing: Boolean, modelMissing: Boolean, sttMissing: Boolean = false) {
         _preparingStatus.value = when {
             modelMissing && voiceMissing -> "Downloading model and voices..."
             modelMissing                 -> "Downloading AI model..."
+            sttMissing                   -> "Downloading offline speech model..."
             else                         -> "Preparing voices..."
         }
     }

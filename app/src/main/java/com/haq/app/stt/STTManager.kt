@@ -40,6 +40,68 @@ object STTManager {
         SpeechRecognizer.isRecognitionAvailable(context)
 
     /**
+     * Returns true when the on-device STT model for [languageCode] is installed
+     * and ready to use in airplane mode.
+     *
+     * On API 33+ this wraps [SpeechRecognizer.checkRecognitionSupport] and checks
+     * whether [languageCode] appears in [RecognitionSupport.installedOnDeviceLanguages].
+     * On API 29-32 there is no programmatic way to query installation status, so
+     * this returns true immediately (the device will fall back gracefully).
+     * On any error the check returns true to avoid blocking the gate indefinitely.
+     */
+    suspend fun isOfflineModelInstalled(context: Context, languageCode: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Log.d("Haq/STT", "isOfflineModelInstalled: API < 33, skipping gate")
+            return true
+        }
+        val ctx = context.applicationContext
+        val bcp47 = toBcp47(languageCode)
+        return suspendCancellableCoroutine { continuation ->
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    val preferredService = preferredRecognitionService(ctx).component
+                    val recognizer = if (preferredService != null) {
+                        SpeechRecognizer.createSpeechRecognizer(ctx, preferredService)
+                    } else {
+                        SpeechRecognizer.createSpeechRecognizer(ctx)
+                    }
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, bcp47)
+                    }
+                    recognizer.checkRecognitionSupport(
+                        intent,
+                        Executors.newSingleThreadExecutor(),
+                        object : RecognitionSupportCallback {
+                            override fun onSupportResult(support: RecognitionSupport) {
+                                val installed = support.installedOnDeviceLanguages
+                                val ready = bcp47 in installed
+                                Log.d("Haq/STT",
+                                    "isOfflineModelInstalled: $bcp47 " +
+                                    "installed=$installed → ready=$ready")
+                                recognizer.destroy()
+                                if (continuation.isActive) continuation.resume(ready)
+                            }
+                            override fun onError(error: Int) {
+                                Log.w("Haq/STT",
+                                    "isOfflineModelInstalled: checkRecognitionSupport " +
+                                    "error=$error for $bcp47 — assuming installed")
+                                recognizer.destroy()
+                                if (continuation.isActive) continuation.resume(true)
+                            }
+                        }
+                    )
+                    continuation.invokeOnCancellation {
+                        Handler(Looper.getMainLooper()).post { recognizer.destroy() }
+                    }
+                } catch (e: Exception) {
+                    Log.w("Haq/STT", "isOfflineModelInstalled failed: ${e.message} — assuming installed")
+                    if (continuation.isActive) continuation.resume(true)
+                }
+            }
+        }
+    }
+
+    /**
      * On API 33+, proactively triggers download of the on-device speech
      * recognition model for [languageCode]. Called once during onboarding
      * (PreparingVoices) while the device has WiFi. On API 29-32 there is
