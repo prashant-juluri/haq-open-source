@@ -86,7 +86,7 @@ object MelSpectrogram {
             val t = idx % nFrames
             (max(logMel[m][t], maxVal - 8f) + 4f) / 4f
         }
-        Log.d(TAG, "compute: done")
+        Log.d(TAG, "Mel: maxRaw=${"%.3f".format(maxVal)} out min=${"%.3f".format(result.min())} max=${"%.3f".format(result.max())}")
         return result
     }
 

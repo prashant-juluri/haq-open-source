@@ -129,13 +129,27 @@ class WhisperEngine(private val context: Context) {
         val dModel = WhisperConfig.D_MODEL
         val out    = FloatArray(steps * dModel)
 
-        @Suppress("UNCHECKED_CAST")
-        val raw = result[0].value as Array<Array<FloatArray>>   // [1][steps][dModel]
-        for (s in 0 until steps)
-            for (d in 0 until dModel)
-                out[s * dModel + d] = raw[0][s][d]
+        // Prefer floatBuffer — avoids the nested-array seq-0 bug in ORT Android.
+        // Use name-based access first; fall back to nested-array via index 0.
+        val encOpt = result.get("last_hidden_state")
+        if (encOpt.isPresent) {
+            val encTensor = encOpt.get() as OnnxTensor
+            val fb = encTensor.floatBuffer
+            if (fb != null) fb.get(out)
+            else {
+                @Suppress("UNCHECKED_CAST")
+                val raw = encTensor.value as Array<Array<FloatArray>>
+                for (s in 0 until steps) for (d in 0 until dModel) out[s * dModel + d] = raw[0][s][d]
+            }
+        } else {
+            Log.w(TAG, "Encoder: 'last_hidden_state' not in outputs — falling back to index 0")
+            @Suppress("UNCHECKED_CAST")
+            val raw = result[0].value as Array<Array<FloatArray>>
+            for (s in 0 until steps) for (d in 0 until dModel) out[s * dModel + d] = raw[0][s][d]
+        }
 
         result.close()
+        Log.d(TAG, "Encoder: min=${"%.3f".format(out.min())} max=${"%.3f".format(out.max())}")
         return out
     }
 
@@ -205,6 +219,7 @@ class WhisperEngine(private val context: Context) {
         var decoderKv = allStep0Kv.filter { "decoder" in it.key }  // seq=4, will grow
 
         Log.d(TAG, "Step 0: nextToken=$nextToken encoderKv=${encoderKv.size} decoderKv=${decoderKv.size}")
+        if (encoderKv.isEmpty()) Log.e(TAG, "Step 0: encoderKv EMPTY — encoder cross-attention will be zero on steps 1+! Check ORT tensor.info nullability.")
 
         if (nextToken == WhisperConfig.TOKEN_EOT || nextToken >= WhisperConfig.TOKEN_SOT)
             return generated
@@ -264,24 +279,47 @@ class WhisperEngine(private val context: Context) {
                 val v = result.get(outName)
                 if (!v.isPresent) { Log.w(TAG, "KV '$outName' absent"); continue }
 
-                val tensor = v.get() as OnnxTensor
-                val shape  = tensor.info.shape   // [1, heads, seq, dim]
-                val heads  = shape[1].toInt()
-                val seq    = shape[2].toInt()
-                val dim    = shape[3].toInt()
+                val tensor = v.get() as? OnnxTensor ?: run {
+                    Log.w(TAG, "KV '$outName' not an OnnxTensor"); continue
+                }
+
+                // tensor.info is null for outputs from conditional branches that weren't taken
+                // (ORT Android returns a placeholder OnnxTensor with no metadata in that case).
+                val info = tensor.info ?: run {
+                    // Silently skip — this is expected for encoder KV on use_cache_branch=true
+                    // and for decoder KV on use_cache_branch=false.
+                    continue
+                }
+
+                val shape = info.shape   // [1, heads, seq, dim]
+                if (shape.size < 4) { Log.w(TAG, "KV '$outName' bad rank ${shape.size}"); continue }
+
+                val heads = shape[1].toInt()
+                val seq   = shape[2].toInt()
+                val dim   = shape[3].toInt()
 
                 if (seq == 0) {
-                    Log.w(TAG, "KV '$outName' seq=0 — not output by this branch")
+                    // Explicitly zero-size — branch did not compute this output.
                     continue
                 }
 
                 val flat = FloatArray(heads * seq * dim)
-                tensor.floatBuffer.get(flat)
+                // Prefer floatBuffer. Fall back to byteBuffer in case ORT Android returns null
+                // for floatBuffer on certain tensor allocations (e.g. non-CPU-memory tensors).
+                val fb = tensor.floatBuffer
+                if (fb != null) {
+                    fb.get(flat)
+                } else {
+                    val bb = tensor.byteBuffer ?: run {
+                        Log.w(TAG, "KV '$outName' both floatBuffer and byteBuffer null"); continue
+                    }
+                    bb.asFloatBuffer().get(flat)
+                }
 
                 cache[inName] = Pair(flat, longArrayOf(1L, heads.toLong(), seq.toLong(), dim.toLong()))
                 Log.d(TAG, "KV '$outName' → '$inName' [1,$heads,$seq,$dim]")
             } catch (e: Exception) {
-                Log.w(TAG, "Could not extract KV '$outName': ${e.message}")
+                Log.w(TAG, "KV '$outName' error: ${e.javaClass.simpleName} ${e.message}")
             }
         }
         return cache
