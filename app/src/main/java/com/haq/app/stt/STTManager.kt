@@ -203,14 +203,16 @@ object STTManager {
         // the traditional Google Search app is absent. Prefer it over AiAi because
         // it supports Indian language tags (mr-IN, te-IN, hi-IN, etc.) while AiAi
         // returns ERROR_LANGUAGE_NOT_SUPPORTED (12) for non-English tags.
-        // This service has downloadable on-device models and honours EXTRA_PREFER_OFFLINE.
+        // This service does NOT have downloadable offline models — checkRecognitionSupport
+        // returns ERROR_CANNOT_CHECK_SUPPORT (14), meaning EXTRA_PREFER_OFFLINE=true
+        // causes it to immediately return ERROR_RECOGNIZER_BUSY (12). Use false.
         val ttsBundled = allServices.firstOrNull { info ->
             info.serviceInfo?.packageName == GOOGLE_TTS_PACKAGE
         }?.serviceInfo
         if (ttsBundled != null) {
             val component = ComponentName(ttsBundled.packageName, ttsBundled.name)
             Log.d("Haq/STT", "Using GoogleTTS-bundled STT service: $component")
-            return RecognitionServiceResult(component, supportsPreferOffline = true)
+            return RecognitionServiceResult(component, supportsPreferOffline = false)
         }
 
         // Last resort: AiAi or any other google-named service. AiAi is on-device
