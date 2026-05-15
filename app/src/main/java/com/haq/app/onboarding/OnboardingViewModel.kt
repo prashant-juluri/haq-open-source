@@ -21,6 +21,7 @@ import kotlin.coroutines.resume
 sealed class OnboardingStep {
     object PreparingVoices       : OnboardingStep()  // pre-onboarding voice readiness gate
     object LanguageSelect        : OnboardingStep()
+    object NoWifi                : OnboardingStep()  // selected language needs network but offline
     object Introduction          : OnboardingStep()
     object AskName               : OnboardingStep()
     object AskState              : OnboardingStep()
@@ -187,6 +188,12 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         voicePollingJob = viewModelScope.launch {
             // Initial trigger — idempotent if voice is already present.
             TTSManager.ensureVoiceDownloading(languageCode)
+            // API 33+: proactively download the on-device STT model for this
+            // language while the device has WiFi. On API 29-32 the implicit
+            // download via EXTRA_PREFER_OFFLINE=true on first main-app use
+            // handles those devices (Google's recognizer queues the download
+            // when it can't find a local model but has network access).
+            STTManager.triggerOfflineModelDownload(getApplication(), languageCode)
 
             // Counter of 5 s cycles to wait before the next testSpeak() call.
             // 0 = test immediately, N > 0 = wait N more cycles.
@@ -194,7 +201,10 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             // Consecutive testSpeak failures. Resets when voice goes missing (re-appears after
             // re-download) or model becomes unready.
             var testSpeakFailures = 0
-            // Show InstallingVoicePacks after this many 30 s testSpeak failures (~3 min).
+            // Consecutive cycles where voiceMissing=true while model is ready.
+            // Escape hatch fires on either this OR testSpeakFailures exceeding the threshold.
+            var voiceMissingCycles = 0
+            // Show InstallingVoicePacks after this many failures/missing cycles (~30 s).
             val escapeAfterFailures = 6
 
             while (true) {
@@ -204,7 +214,8 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 Log.d("Haq/Onboard",
                     "Single-lang readiness poll: lang=$languageCode " +
                     "modelReady=$modelReady voiceMissing=$voiceMissing " +
-                    "testSpeakIn=${testSpeakCountdown * 5}s")
+                    "testSpeakIn=${testSpeakCountdown * 5}s " +
+                    "voiceMissingCycles=$voiceMissingCycles")
 
                 if (modelReady) {
                     if (voiceMissing) {
@@ -212,7 +223,22 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         TTSManager.ensureVoiceDownloading(languageCode)
                         testSpeakCountdown = 0  // test immediately once it appears
                         testSpeakFailures  = 0
+                        voiceMissingCycles++
+
+                        // If voice data is simply not available on this device (e.g. language
+                        // not supported by Google TTS), voiceMissing stays true indefinitely
+                        // and testSpeakFailures never increments — the screen hangs forever.
+                        // Surface InstallingVoicePacks after the same threshold so the user
+                        // is not stuck waiting with no feedback or escape.
+                        if (voiceMissingCycles >= escapeAfterFailures &&
+                            _step.value is OnboardingStep.PreparingVoices) {
+                            Log.w("Haq/Onboard",
+                                "voiceMissing for $voiceMissingCycles cycles — " +
+                                "surfacing InstallingVoicePacks escape screen")
+                            _step.value = OnboardingStep.InstallingVoicePacks
+                        }
                     } else {
+                        voiceMissingCycles = 0
                         // Voice entry present — check synthesability via speak(), but at
                         // most once per 30 s. Repeated speak() calls while Google TTS is
                         // downloading the same voice can restart/interrupt the download.
@@ -249,6 +275,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 } else {
                     testSpeakCountdown = 0
                     testSpeakFailures  = 0
+                    voiceMissingCycles = 0
                 }
 
                 // Keep polling on both PreparingVoices and InstallingVoicePacks —
@@ -263,10 +290,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun updatePreparingStatus(voiceMissing: Boolean, modelMissing: Boolean) {
+    private fun updatePreparingStatus(voiceMissing: Boolean, modelMissing: Boolean, sttMissing: Boolean = false) {
         _preparingStatus.value = when {
             modelMissing && voiceMissing -> "Downloading model and voices..."
             modelMissing                 -> "Downloading AI model..."
+            sttMissing                   -> "Downloading offline speech model..."
             else                         -> "Preparing voices..."
         }
     }
@@ -537,9 +565,32 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun selectLanguage(language: String) {
         selectedLanguage = language
+        if (STTManager.requiresNetwork(language) && !STTManager.isNetworkAvailable(getApplication())) {
+            Log.d("Haq/Onboard", "selectLanguage: lang=$language requires network but offline — showing NoWifi")
+            _step.value = OnboardingStep.NoWifi
+            return
+        }
         Log.d("Haq/Onboard", "selectLanguage: lang=$language — starting single-language readiness gate")
         _step.value = OnboardingStep.PreparingVoices
+        STTManager.logAiAiSupportedLanguages(getApplication())
         startSingleLanguageReadinessPolling(language)
+    }
+
+    fun resetToLanguageSelect() {
+        voicePollingJob?.cancel()
+        _step.value = OnboardingStep.LanguageSelect
+    }
+
+    /** Called when the user taps Retry on the NoWifi screen. Re-checks connectivity. */
+    fun retryAfterWifi() {
+        if (STTManager.requiresNetwork(selectedLanguage) && !STTManager.isNetworkAvailable(getApplication())) {
+            Log.d("Haq/Onboard", "retryAfterWifi: still offline for $selectedLanguage")
+            return  // stay on NoWifi screen
+        }
+        Log.d("Haq/Onboard", "retryAfterWifi: network available — proceeding with $selectedLanguage")
+        _step.value = OnboardingStep.PreparingVoices
+        STTManager.logAiAiSupportedLanguages(getApplication())
+        startSingleLanguageReadinessPolling(selectedLanguage)
     }
 
     fun onIntroductionComplete() {
@@ -894,7 +945,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         onOutputError = { /* voice unavailable — silent, wait for tap */ },
                     )
                 } else {
-                    delay(500L)
+                    // ERROR_RECOGNIZER_BUSY (12): previous recognizer's service binding
+                    // hasn't fully released yet. Wait 2 s to let cleanup complete before
+                    // creating a new recognizer; 500 ms is insufficient.
+                    val isRecognizerBusy = e.message?.endsWith("12") == true
+                    delay(if (isRecognizerBusy) 2000L else 500L)
                     onMicPressed()
                 }
             }

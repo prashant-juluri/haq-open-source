@@ -10,16 +10,23 @@ if underpaid — with no internet connection required.
 Tagline: Your rights. Your language. No middleman.
 
 ## Non-negotiable constraints
-- Everything runs on-device. No network calls for core functionality.
-- The app must work perfectly in airplane mode at all times.
+- Gemma inference, TTS, and RAG run fully on-device with no network.
+- STT: en and hi work offline via AiAi. All other Indian languages
+  require WiFi for STT only — everything else remains on-device.
 - No Firebase. No remote database. No cloud inference of any kind.
-- If a suggested solution requires internet for core features, it is wrong.
+- If a suggested solution requires internet for Gemma, TTS, or RAG, it is wrong.
 
 ## Tech stack
 - Language: Kotlin + Jetpack Compose
-- Model: Gemma 4 E4B via LiteRT (on-device, offline)
-- STT: Audio recorded as WAV via AudioRecorder, passed directly to Gemma 4 E2B via InputData.Audio — no separate STT model required
-- TTS: Android TTS API
+- Model: Gemma 4 E2B via LiteRT-LM (on-device, offline)
+- STT: Android SpeechRecognizer with language-aware routing:
+  - AiAi (`com.google.android.as`): en-IN (offline, pre-installed) and
+    hi-IN (offline, downloads silently on first WiFi launch via `triggerModelDownload`)
+  - GoogleTTSRecognitionService: all other Indian languages (WiFi required for STT only)
+  - Onboarding always passes null language tag → AiAi auto-detect, fully offline
+  - WiFi prompt shown in onboarding (`NoWifi` step) and main app (AlertDialog)
+    when device is offline and the profile language needs network STT
+- TTS: Android TTS API (Google TTS engine preferred explicitly)
 - Storage: SQLite via Room
 - Vector search: sqlite-vec
 - Embeddings: paraphrase-multilingual-MiniLM-L12-v2
@@ -33,7 +40,10 @@ Mid-range Android — Snapdragon 6/7 series, Android 10+
 Minimum RAM: 4GB
 
 ## Languages supported
-Hindi (hi), Telugu (te), Malayalam (ml), Kannada (kn), English (en) at launch.
+All 12 at launch: Hindi (hi), Telugu (te), Malayalam (ml), Kannada (kn),
+Tamil (ta), Bengali (bn), Gujarati (gu), Marathi (mr), Odia (or),
+Assamese (as), Nepali (ne), English (en).
+Offline STT: en, hi. WiFi STT: all others.
 Architecture must be language-agnostic — adding a new language 
 should require no code changes, only asset additions.
 
@@ -81,7 +91,7 @@ should require no code changes, only asset additions.
 - family_size INTEGER
 - has_bpl_card BOOLEAN
 - has_aadhaar BOOLEAN
-- preferred_language TEXT    -- "hi", "te", "ta"
+- preferred_language TEXT    -- "hi", "te", "ta", etc.
 - created_at DATETIME
 
 ### user_interactions
@@ -110,7 +120,14 @@ should require no code changes, only asset additions.
 3. Return top 8 candidates
 4. Filter candidates against user_profile via eligibility_rules SQL
 5. Pass top 3-4 matching schemes as RAG context to Gemma
-6. Never pass all 40 schemes to Gemma
+6. Never pass all schemes to Gemma
+
+## Knowledge base
+Three SQLite databases shipped in assets:
+- schemes.db — 4,545 government welfare schemes from myscheme.gov.in
+- law.db — 780 acts and legal provisions
+- offices.db — 862 government offices with contact details
+All three are preloaded by HaqViewModel on app start.
 
 ## Response structure
 Every Gemma response must follow this structure:
@@ -129,55 +146,50 @@ Prompt API / AICore without touching any other code.
 Never call LiteRT APIs directly from ViewModel or UI layer.
 
 ## Current build stage
-WEEK 2 COMPLETE — Full voice pipeline working end to end:
-- SpeechRecognizer (online) → transcript
-- Gemma 4 E2B → streaming text response to UI
-- TTS speaks sentence by sentence as tokens arrive
-- App returns to READY state after each response
-- VAD tuned: 2s minimum, 2.5s silence cutoff
-
-WEEK 3 IN PROGRESS
-- Onboarding: tap-to-speak complete, voice pack install after onboarding
-- STT: clean audio session, single recordAndTranscribeWithLanguage() path
-- Pending: knowledge base integration from colleague
+WEEK 3 COMPLETE — Full voice pipeline with language-aware STT routing:
+- AiAi on-device STT: en-IN (pre-installed), hi-IN (downloads on first WiFi launch)
+- GoogleTTSRecognitionService: network path for te, ml, kn, ta, bn, gu, mr, or, as, ne
+- WiFi-required prompt: NoWifi step in onboarding, AlertDialog in main app
+- Onboarding: tap-to-speak complete, language-aware TTS voice selection
+- PreparingVoices gates on Gemma model ready + TTS voice testSpeak passing
+- RAG pipeline working end to end with all three knowledge bases
 
 ## Known pending items
-- Hindi TTS voice data needs installing on device
-  (Settings → TTS → Google TTS → Install voice data → Hindi)
-- Language hardcoded to "hi" — will come from user profile
-- EXTRA_PREFER_OFFLINE = false (online recognizer) —
-  flip to true once offline Hindi model downloaded on device
+- PreparingVoices does not detect WiFi re-enable while polling — user must
+  kill and relaunch if they enable WiFi while stuck on that screen
+- Whisper ONNX stashed on feat/whisper-offline-stt — post-hackathon path
+  for fully offline STT for Dravidian and other non-AiAi languages
 
 ## Development Principles
 
 - **minSdk 29+ only.** Never add compatibility shims or version checks for API levels below 29.
 - **No OEM-specific code.** Never write code that targets Samsung, Xiaomi, OnePlus, or any other OEM's custom APIs or intents. All OEMs must be treated identically.
 - **Documented APIs only.** Never use reflection, internal Android APIs, or undocumented system intents. If an API is not in the Android SDK javadoc, it is off-limits.
-- **SpeechRecognizer must run on the main Looper.** Always use `Handler(Looper.getMainLooper()).post {}` to create and call `startListening()`. `withContext(Dispatchers.Main)` is insufficient — SpeechRecognizer's internal ServiceConnection binds to the thread Looper, not the Kotlin dispatcher.
-- **Prefer Google TTS and STT engines explicitly.** On devices with OEM TTS/STT engines (Samsung, Xiaomi, etc.), always prefer Google TTS (`com.google.android.tts`) and Google STT (`com.google.android.googlequicksearchbox`) by initialising with explicit engine/component names. Fall back to system default only if Google engines are not installed. This is not OEM-specific code — it is engine preference using documented Android APIs available since API 14.
-- **Voice selection uses `findBestVoice()` priority:** P1 non-OEM offline non-stub exact locale, P2 non-OEM online non-stub exact locale, P3 any offline non-stub exact locale (Samsung fallback), P4 any non-stub exact locale, P5 any non-stub language-only, P6 stub/null last resort. **Stubs (names ending in `-language`) are excluded at every tier P1–P5.** If a stub wins at any tier, `speak()` rejects it and fires `onOutputError`, preventing real voices at lower tiers (e.g. Samsung's working voice) from ever being tried. Never call `setLanguage()` in `speak()` — always use `tts.voice = findBestVoice(...)`.
-- **`LanguageSelect` is the first visible step — shown immediately on launch.** There is no blocking "preparing voices" screen before language selection. After the user picks a language, `selectLanguage()` sets `_step = PreparingVoices` and calls `startSingleLanguageReadinessPolling(languageCode)`. That polling loop gates on BOTH `GemmaManager.isModelReady()` AND `TTSManager.testSpeak(languageCode)` — only the selected language's voice pack needs to be ready, not all 5. `TTSManager.ensureVoiceDownloading(languageCode)` is called once at the start and each poll cycle to keep the Google TTS download active. **There is no escape hatch — Introduction is never entered with a silent voice.**
-- **`speak()` ERROR_OUTPUT (-4) recovery in onboarding: call `reinitialiseAndWait()` then `clearCachedVoice(lang)`.** After a -4 error the voice has disappeared from the engine's list. The correct recovery is `reinitialiseAndWait()` (which polls until the full voice list is stable) followed by `clearCachedVoice(languageCode)` so `findBestVoice()` re-scans the fresh list on the next attempt. The cached voice entry must be cleared after reinitialise — if it is not cleared, `findBestVoice()` returns the stale cached object which is no longer in the engine's voice list. The `speakOnboarding()` function in `OnboardingViewModel` does this: saves `stepOnEntry`, on -4 reinits once, then retries up to 4 times total.
-- **`speakOnboarding()` must only change `_step` to `PreparingVoices` when called from `Introduction`, never from question steps.** `ConversationOnboardingScreen` has a `LaunchedEffect(micActivationEvent)` that re-fires whenever the screen is composed. If `speakOnboarding` changes `_step` away from (e.g.) `AskState` to `PreparingVoices` and back, the screen unmounts then remounts, and `LaunchedEffect` re-fires with the current `micActivationEvent` value — starting STT before the question is spoken and routing the transcript to the wrong step handler. For `Introduction`, `micActivationEvent == 0` at entry so the re-fire is harmless. For all other steps, reinit must happen silently (no step change).
-- **`checkLanguageSupport()` is unreliable — stub voices pass even without downloaded data.** Stub voices (names ending in `-language`) appear in the voice list but have no synthesis data and produce `ERROR_OUTPUT (-4)` when used. `checkLanguageSupport()` correctly filters stubs by name, but real-looking non-stub voice entries can also exist without downloaded data. **Always verify with `testSpeak()` during `PreparingVoices`.** If `testSpeak()` returns false, keep `_step = PreparingVoices`, poll every 5 seconds up to 60 s (12 retries) before advancing with the escape hatch. `verifySingleVoiceSpeakable()` in `OnboardingViewModel` implements this for the selected language.
-- **Never call `ACTION_INSTALL_TTS_DATA` — Google TTS downloads voice data silently when `speak()` is attempted for a missing voice. The download completion is signalled by `ACTION_TTS_DATA_INSTALLED`. `MainActivity` registers a `BroadcastReceiver` for this intent; on receipt it calls `OnboardingViewModel.onTtsDataInstalled()`, which always reinitialises TTS regardless of current step. If in `PreparingVoices` it re-runs the `testSpeak` gate and advances. If past `PreparingVoices` (escape hatch already fired) it reinitialises silently so subsequent `speak()` calls (onboarding questions or Gemma responses) pick up the downloaded voice without an app restart. The 5-second polling loop is the fallback only.**
-- **`InstallingVoicePacks` is an edge case only**, shown if `checkLanguageSupport()` still returns false for the selected language after `PreparingVoices` completes. The user taps Continue to proceed regardless.
-- **`PreparingVoices` waits for both model AND the one selected language's voice.** `startSingleLanguageReadinessPolling()` only calls `enterIntroduction()` when both `GemmaManager.isModelReady(getApplication())` and `verifySingleVoiceSpeakable(selectedLanguage)` are true. The screen shows context-specific status: "Downloading AI model..." / "Preparing voices..." / "Downloading model and voices..." depending on what is missing.
-- **`testSpeak()` uses near-silent volume (0.01f), not 0f.** `speak()` builds a `Bundle` with `KEY_PARAM_VOLUME = 0.01f`. Using exactly 0f bypasses the synthesis pipeline on some engines, returning `ERROR_OUTPUT` immediately without triggering the background voice-data download. At 0.01f the utterance is inaudible but the engine runs the full synthesis path, which triggers Google TTS's lazy download for missing voice packs.
-- **`speak()` when `!isReady` calls `onOutputError?.invoke() ?: onComplete?.invoke()`.** It used to call `onComplete` unconditionally, which made `testSpeak()` return `true` (voice available) when TTS was not ready. The fix ensures `testSpeak()` returns `false` whenever the engine is not ready.
-- **`GemmaManager.isModelReady(context)` accepts an optional context.** `OnboardingViewModel` calls it as `isModelReady(getApplication())` so the model-file check works even before `GemmaManager.init()` is called. Falls back to `appContext` when context is null, for backward compatibility with other callers.
-- **xnnpack cache cleared on every engine creation.** `LiteRTEngine.init` deletes all `*.xnnpack_cache` files from `context.cacheDir` before constructing `Engine(config)`. This prevents `DYNAMIC_UPDATE_SLICE` crashes caused by stale cache from a previous install.
-- **`findBestVoice()` logs a warning when only a stub or null is found** (voice data may have been removed after a -4 error). It does NOT call `reinitialise()` itself — that is handled by the `onOutputError` → `speakOnboarding` retry flow.
-- **`reinitialiseAndWait()` polls `tts?.voices?.size` after `onInit` fires**, waiting for the count to stabilise above 100. This handles Samsung's async voice list loading (only ~14 stubs are present immediately after `onInit`; the full list arrives asynchronously). The poll runs every 300 ms, requires 3 consecutive stable checks above 100, and times out at 10 seconds. No `delay()` is needed after calling `reinitialiseAndWait()`.
+- **SpeechRecognizer must run on the main Looper.** Always use `Handler(Looper.getMainLooper()).post {}` to create and call `startListening()`. `withContext(Dispatchers.Main)` is insufficient — SpeechRecognizer's internal ServiceConnection binds to the thread Looper, not the Kotlin dispatcher. `destroy()` must also be posted to the main Looper from any callback thread.
+- **STT service routing is language-aware.** `preferredRecognitionService(context, bcp47)` selects AiAi only when `bcp47 == null` (onboarding auto-detect) or `bcp47 in AIAI_CAPABLE` (`{"en-IN", "hi-IN"}`). All other languages fall through to `googlequicksearchbox` (P2) or `GoogleTTSRecognitionService` (P3) with `EXTRA_PREFER_OFFLINE = false`. Never set `EXTRA_PREFER_OFFLINE = true` for AiAi — it returns `ERROR_RECOGNIZER_BUSY (12)` immediately.
+- **AiAi is on-device by design; do not set `EXTRA_PREFER_OFFLINE`.** AiAi (`com.google.android.as`) handles en-IN offline natively. hi-IN is in its `supportedOnDeviceLanguages` list and is downloaded via `triggerModelDownload()` during `PreparingVoices`. AiAi's downloaded models live in AiAi's own app storage — they survive Haq reinstalls.
+- **WiFi check before STT for network-required languages.** `STTManager.requiresNetwork(langCode)` returns true for any language outside `AIAI_CAPABLE`. `STTManager.isNetworkAvailable(context)` uses `NetworkCapabilities.NET_CAPABILITY_INTERNET` (API 29+). `OnboardingViewModel.selectLanguage()` checks both and routes to `OnboardingStep.NoWifi` if offline. `HaqViewModel.onMicButtonPressed()` checks both and sets `noWifiForMic = true` if offline, which surfaces an `AlertDialog`.
+- **Prefer Google TTS and STT engines explicitly.** On devices with OEM TTS/STT engines (Samsung, Xiaomi, etc.), always prefer Google TTS (`com.google.android.tts`) and Google STT (`com.google.android.googlequicksearchbox`) by initialising with explicit engine/component names. Fall back to system default only if Google engines are not installed.
+- **Voice selection uses `findBestVoice()` priority:** P1 non-OEM offline non-stub exact locale, P2 non-OEM online non-stub exact locale, P3 any offline non-stub exact locale (Samsung fallback), P4 any non-stub exact locale, P5 any non-stub language-only, P6 stub/null last resort. **Stubs (names ending in `-language`) are excluded at every tier P1–P5.** Never call `setLanguage()` in `speak()` — always use `tts.voice = findBestVoice(...)`.
+- **`LanguageSelect` is the first visible step — shown immediately on launch.** After the user picks a language, `selectLanguage()` checks connectivity (WiFi prompt if needed), then sets `_step = PreparingVoices` and calls `startSingleLanguageReadinessPolling(languageCode)`. That polling loop gates on BOTH `GemmaManager.isModelReady()` AND `TTSManager.testSpeak(languageCode)`.
+- **`speak()` ERROR_OUTPUT (-4) recovery in onboarding: call `reinitialiseAndWait()` then `clearCachedVoice(lang)`.** After a -4 error the voice has disappeared from the engine's list. `speakOnboarding()` saves `stepOnEntry`, on -4 reinits once, then retries up to 4 times total.
+- **`speakOnboarding()` must only change `_step` to `PreparingVoices` when called from `Introduction`, never from question steps.** If `speakOnboarding` changes step during a question, `ConversationOnboardingScreen`'s `LaunchedEffect(micActivationEvent)` re-fires and routes the transcript to the wrong handler.
+- **`checkLanguageSupport()` is unreliable — always verify with `testSpeak()` during `PreparingVoices`.** Stub voices (names ending in `-language`) pass `checkLanguageSupport()` but produce `ERROR_OUTPUT (-4)`. `verifySingleVoiceSpeakable()` in `OnboardingViewModel` runs `testSpeak()` and retries up to 6 cycles (~30s) before the escape hatch fires.
+- **Never call `ACTION_INSTALL_TTS_DATA`.** Google TTS downloads voice data silently when `speak()` is attempted. Completion is signalled by `ACTION_TTS_DATA_INSTALLED`; `MainActivity` receives it and calls `OnboardingViewModel.onTtsDataInstalled()`.
+- **`InstallingVoicePacks` is an edge case only**, shown if `checkLanguageSupport()` still returns false after `PreparingVoices` completes. The user taps Continue to proceed regardless.
+- **`testSpeak()` uses near-silent volume (0.01f), not 0f.** At 0f some engines bypass synthesis and return `ERROR_OUTPUT` without triggering the background voice download. At 0.01f the engine runs the full synthesis path.
+- **`GemmaManager.isModelReady(context)` accepts an optional context.** Call as `isModelReady(getApplication())` so the model-file check works before `GemmaManager.init()` is called.
+- **xnnpack cache cleared on every engine creation.** `LiteRTEngine.init` deletes all `*.xnnpack_cache` files from `context.cacheDir` before constructing `Engine(config)`. This prevents `DYNAMIC_UPDATE_SLICE` crashes from stale cache.
+- **`reinitialiseAndWait()` polls `tts?.voices?.size` after `onInit` fires**, waiting for the count to stabilise above 100. Samsung loads only ~14 stubs immediately after `onInit`; the full list arrives asynchronously. Poll every 300 ms, require 3 consecutive stable checks above 100, time out at 10 seconds.
 
 ## Do not suggest
 - Any cloud-based model inference
 - Firebase or any remote database
 - Python (app is Kotlin only)
-- Solutions requiring internet for core functionality
 - Separate translation APIs (Gemma handles multilingual natively)
 - Loading the model from external storage or downloading on first run
 - The .task format — the correct format is .litertlm
+- Whisper ONNX for the current build — it is stashed on feat/whisper-offline-stt
 
 ## Model
 - Model: Gemma 4 E2B via LiteRT-LM (on-device, offline)
@@ -187,9 +199,9 @@ WEEK 3 IN PROGRESS
 
 ## Model delivery
 - On first launch, `ModelDownloadManager` checks if the model exists in `filesDir`
-- If missing, it requires WiFi and downloads from S3 with progress reporting
+- If missing, it requires WiFi and downloads from HuggingFace with progress reporting
 - Download URL: `https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm`
 - Uses an atomic temp-file rename to avoid partial writes
-- INTERNET permission is the ONE exception to the no-network rule; it exists only for this download
+- INTERNET permission exists only for this model download and network STT
 - After download completes, all inference runs fully offline
 - Do NOT suggest bundling the model in assets or requiring adb push

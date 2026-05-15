@@ -56,6 +56,11 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeLanguage = MutableStateFlow("en")
     val activeLanguage: StateFlow<String> = _activeLanguage.asStateFlow()
 
+    private val _noWifiForMic = MutableStateFlow(false)
+    val noWifiForMic: StateFlow<Boolean> = _noWifiForMic.asStateFlow()
+
+    fun dismissNoWifi() { _noWifiForMic.value = false }
+
     fun getAllProfiles(): Flow<List<UserProfile>> = ProfileManager.getAllProfiles()
 
     // Active profile — updated on load, onboarding complete, and profile switch.
@@ -239,9 +244,14 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             TTSManager.stop()
             delay(300) // allow TTS to release audio focus
+            val langTag = _activeLanguage.value
+            if (STTManager.requiresNetwork(langTag) && !STTManager.isNetworkAvailable(getApplication())) {
+                Log.d("Haq/VM", "Mic: lang=$langTag needs network but offline — showing NoWifi prompt")
+                _noWifiForMic.value = true
+                return@launch
+            }
             _appState.value = AppState.LISTENING
             try {
-                val langTag = _activeLanguage.value
                 Log.d("Haq/VM", "Mic pressed: activeLanguage=$langTag profile=${activeProfile?.name}")
                 val transcript = STTManager.recordAndTranscribe(getApplication(), langTag)
                 Log.d("Haq/STT", "Transcript: \"$transcript\"")
