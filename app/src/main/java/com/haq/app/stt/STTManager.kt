@@ -189,19 +189,7 @@ object STTManager {
             }
         }
 
-        // P1: AiAi (Android System Intelligence) — on-device by design, no network.
-        // Testing whether it accepts Indian language tags; if it does, this gives
-        // us offline STT without Whisper. EXTRA_PREFER_OFFLINE not needed (on-device).
-        val aiaiService = allServices.firstOrNull { info ->
-            info.serviceInfo?.packageName == AIAI_PACKAGE
-        }?.serviceInfo
-        if (aiaiService != null) {
-            val component = ComponentName(aiaiService.packageName, aiaiService.name)
-            Log.d("Haq/STT", "Using AiAi on-device STT service: $component")
-            return RecognitionServiceResult(component, supportsPreferOffline = false)
-        }
-
-        // P2: googlequicksearchbox — supports Indian language tags, network-dependent.
+        // P1: googlequicksearchbox — supports Indian language tags, network-dependent.
         val services = context.packageManager.queryIntentServices(
             Intent(RecognitionService.SERVICE_INTERFACE).setPackage(GOOGLE_STT_PACKAGE), 0)
         val googleService = services.firstOrNull { info ->
@@ -213,9 +201,10 @@ object STTManager {
             return RecognitionServiceResult(component, supportsPreferOffline = true)
         }
 
-        // P3: GoogleTTSRecognitionService — supports Indian language tags but network-only.
+        // P2: GoogleTTSRecognitionService — supports Indian language tags but network-only.
         // checkRecognitionSupport returns ERROR_CANNOT_CHECK_SUPPORT (14); no offline models.
         // EXTRA_PREFER_OFFLINE=true causes immediate ERROR_RECOGNIZER_BUSY (12). Use false.
+        // AiAi (com.google.android.as) only has en-IN offline — useless for Indian languages.
         val ttsBundled = allServices.firstOrNull { info ->
             info.serviceInfo?.packageName == GOOGLE_TTS_PACKAGE
         }?.serviceInfo
