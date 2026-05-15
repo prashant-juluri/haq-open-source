@@ -201,7 +201,10 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             // Consecutive testSpeak failures. Resets when voice goes missing (re-appears after
             // re-download) or model becomes unready.
             var testSpeakFailures = 0
-            // Show InstallingVoicePacks after this many 30 s testSpeak failures (~3 min).
+            // Consecutive cycles where voiceMissing=true while model is ready.
+            // Escape hatch fires on either this OR testSpeakFailures exceeding the threshold.
+            var voiceMissingCycles = 0
+            // Show InstallingVoicePacks after this many failures/missing cycles (~30 s).
             val escapeAfterFailures = 6
 
             while (true) {
@@ -213,7 +216,8 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                     "Single-lang readiness poll: lang=$languageCode " +
                     "modelReady=$modelReady voiceMissing=$voiceMissing " +
                     "sttModelReady=$sttModelReady " +
-                    "testSpeakIn=${testSpeakCountdown * 5}s")
+                    "testSpeakIn=${testSpeakCountdown * 5}s " +
+                    "voiceMissingCycles=$voiceMissingCycles")
 
                 if (modelReady) {
                     if (voiceMissing) {
@@ -221,7 +225,22 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         TTSManager.ensureVoiceDownloading(languageCode)
                         testSpeakCountdown = 0  // test immediately once it appears
                         testSpeakFailures  = 0
+                        voiceMissingCycles++
+
+                        // If voice data is simply not available on this device (e.g. language
+                        // not supported by Google TTS), voiceMissing stays true indefinitely
+                        // and testSpeakFailures never increments — the screen hangs forever.
+                        // Surface InstallingVoicePacks after the same threshold so the user
+                        // is not stuck waiting with no feedback or escape.
+                        if (voiceMissingCycles >= escapeAfterFailures &&
+                            _step.value is OnboardingStep.PreparingVoices) {
+                            Log.w("Haq/Onboard",
+                                "voiceMissing for $voiceMissingCycles cycles — " +
+                                "surfacing InstallingVoicePacks escape screen")
+                            _step.value = OnboardingStep.InstallingVoicePacks
+                        }
                     } else {
+                        voiceMissingCycles = 0
                         // Voice entry present — check synthesability via speak(), but at
                         // most once per 30 s. Repeated speak() calls while Google TTS is
                         // downloading the same voice can restart/interrupt the download.
@@ -258,6 +277,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 } else {
                     testSpeakCountdown = 0
                     testSpeakFailures  = 0
+                    voiceMissingCycles = 0
                 }
 
                 // Keep polling on both PreparingVoices and InstallingVoicePacks —
