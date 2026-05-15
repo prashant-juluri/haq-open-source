@@ -87,6 +87,7 @@ class WhisperEngine(private val context: Context) {
         kvMap = buildKvMap(mergedKvOutputs, mergedKvInputNames)
 
         Log.d(TAG, "Encoder inputs:        ${encSession!!.inputNames.joinToString()}")
+        Log.d(TAG, "Encoder outputs:       ${encSession!!.outputNames.joinToString()}")
         Log.d(TAG, "Merged decoder inputs: ${decMergedSession!!.inputNames.joinToString()}")
         Log.d(TAG, "Merged decoder outputs:${decMergedSession!!.outputNames.joinToString()}")
         Log.d(TAG, "KV map (${kvMap.size}): ${kvMap.entries.take(2)}…")
@@ -105,6 +106,7 @@ class WhisperEngine(private val context: Context) {
     suspend fun transcribe(samples: FloatArray, langToken: Int): String =
         withContext(Dispatchers.Default) {
             try {
+                Log.d(TAG, "transcribe: ${samples.size} samples langToken=$langToken")
                 val mel    = MelSpectrogram.compute(samples)
                 val hidden = runEncoder(mel)
                 val tokens = greedyDecode(hidden, langToken)
@@ -129,22 +131,23 @@ class WhisperEngine(private val context: Context) {
         val dModel = WhisperConfig.D_MODEL
         val out    = FloatArray(steps * dModel)
 
-        // Prefer floatBuffer — avoids the nested-array seq-0 bug in ORT Android.
-        // Use name-based access first; fall back to nested-array via index 0.
+        // Always prefer floatBuffer — avoids the ORT Android nested-array bug.
+        // Try name-based access first; fall back to index 0 if the name differs.
         val encOpt = result.get("last_hidden_state")
-        if (encOpt.isPresent) {
-            val encTensor = encOpt.get() as OnnxTensor
-            val fb = encTensor.floatBuffer
-            if (fb != null) fb.get(out)
-            else {
-                @Suppress("UNCHECKED_CAST")
-                val raw = encTensor.value as Array<Array<FloatArray>>
-                for (s in 0 until steps) for (d in 0 until dModel) out[s * dModel + d] = raw[0][s][d]
-            }
+        val encTensor: OnnxTensor = if (encOpt.isPresent) {
+            encOpt.get() as OnnxTensor
         } else {
-            Log.w(TAG, "Encoder: 'last_hidden_state' not in outputs — falling back to index 0")
+            Log.w(TAG, "Encoder: 'last_hidden_state' not in outputs — using index 0")
+            result[0] as OnnxTensor
+        }
+        val fb = encTensor.floatBuffer
+        if (fb != null) {
+            fb.rewind()
+            fb.get(out)
+        } else {
+            // floatBuffer unavailable — use nested-array fallback.
             @Suppress("UNCHECKED_CAST")
-            val raw = result[0].value as Array<Array<FloatArray>>
+            val raw = encTensor.value as Array<Array<FloatArray>>
             for (s in 0 until steps) for (d in 0 until dModel) out[s * dModel + d] = raw[0][s][d]
         }
 
@@ -205,10 +208,30 @@ class WhisperEngine(private val context: Context) {
         val step0Result = decMergedSession!!.run(step0Inputs)
         step0Inputs.values.forEach { it.close() }
 
-        // Read logits by name — avoids relying on output index ordering.
-        @Suppress("UNCHECKED_CAST")
-        val logits0 = (step0Result.get("logits").get() as OnnxTensor).value as Array<Array<FloatArray>>
-        var nextToken = logits0[0].last().indices.maxByOrNull { logits0[0].last()[it] }!!
+        // Read step-0 logits via floatBuffer (avoids ORT Android conditional-branch bug).
+        // Shape: [1, prompt.size, vocab] — we want argmax of the last token position.
+        val vocabSize = WhisperConfig.VOCAB_SIZE
+        val logitsTensor0 = step0Result.get("logits").get() as OnnxTensor
+        val logitsBuf0 = logitsTensor0.floatBuffer
+        val logitsFlat0: FloatArray
+        if (logitsBuf0 != null) {
+            logitsBuf0.rewind()
+            logitsFlat0 = FloatArray(prompt.size * vocabSize)
+            logitsBuf0.get(logitsFlat0)
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            val nested = logitsTensor0.value as Array<Array<FloatArray>>
+            logitsFlat0 = FloatArray(prompt.size * vocabSize)
+            for (t in 0 until prompt.size)
+                nested[0][t].copyInto(logitsFlat0, t * vocabSize)
+        }
+        // Argmax of the last prompt position → first generated token.
+        val lastOffset = (prompt.size - 1) * vocabSize
+        var nextToken  = (0 until vocabSize).maxByOrNull { logitsFlat0[lastOffset + it] }!!
+        val topLogit   = logitsFlat0[lastOffset + nextToken]
+        val logitMin   = logitsFlat0.drop(lastOffset).take(vocabSize).min()
+        val logitMax   = logitsFlat0.drop(lastOffset).take(vocabSize).max()
+        Log.d(TAG, "Step0 logits: min=${"%.3f".format(logitMin)} max=${"%.3f".format(logitMax)} argmax=$nextToken topLogit=${"%.3f".format(topLogit)}")
 
         // Extract all KV from step 0 via raw floatBuffer (bypasses nested-array seq=0 bug).
         // Encoder KV is fixed for the entire utterance; decoder KV grows each step.
@@ -244,10 +267,19 @@ class WhisperEngine(private val context: Context) {
             val result = decMergedSession!!.run(inputs)
             inputs.values.forEach { it.close() }
 
-            // Read logits by name.
-            @Suppress("UNCHECKED_CAST")
-            val logits = (result.get("logits").get() as OnnxTensor).value as Array<Array<FloatArray>>
-            nextToken  = logits[0][0].indices.maxByOrNull { logits[0][0][it] }!!
+            // Read logits via floatBuffer. Shape: [1, 1, vocab].
+            val logitsTensor = result.get("logits").get() as OnnxTensor
+            val logitsBuf = logitsTensor.floatBuffer
+            nextToken = if (logitsBuf != null) {
+                logitsBuf.rewind()
+                val flat = FloatArray(vocabSize)
+                logitsBuf.get(flat)
+                flat.indices.maxByOrNull { flat[it] }!!
+            } else {
+                @Suppress("UNCHECKED_CAST")
+                val nested = logitsTensor.value as Array<Array<FloatArray>>
+                nested[0][0].indices.maxByOrNull { nested[0][0][it] }!!
+            }
 
             // Extract only decoder KV from steps 1+ — encoder KV stays from step 0.
             decoderKv = extractKv(result, kvMap).filter { "decoder" in it.key }
@@ -302,19 +334,25 @@ class WhisperEngine(private val context: Context) {
                 val flat = FloatArray(heads * seq * dim)
                 // Prefer floatBuffer. Fall back to byteBuffer in case ORT Android returns null
                 // for floatBuffer on certain tensor allocations (e.g. non-CPU-memory tensors).
+                // Note: encoder KV at steps 1+ (use_cache_branch=true) may report a non-zero
+                // shape via tensor.info but have an undersized buffer — BufferUnderflowException
+                // is expected for those and caught below; they are filtered out by the caller anyway.
                 val fb = tensor.floatBuffer
                 if (fb != null) {
+                    fb.rewind()
                     fb.get(flat)
                 } else {
                     val bb = tensor.byteBuffer
                     if (bb == null) { Log.w(TAG, "KV '$outName' both floatBuffer and byteBuffer null"); continue }
+                    bb.rewind()
                     bb.asFloatBuffer().get(flat)
                 }
 
                 cache[inName] = Pair(flat, longArrayOf(1L, heads.toLong(), seq.toLong(), dim.toLong()))
                 Log.d(TAG, "KV '$outName' → '$inName' [1,$heads,$seq,$dim]")
             } catch (e: Exception) {
-                Log.w(TAG, "KV '$outName' error: ${e.javaClass.simpleName} ${e.message}")
+                // BufferUnderflowException for encoder KV at steps 1+ is expected — suppress.
+                Log.d(TAG, "KV '$outName' skipped: ${e.javaClass.simpleName}")
             }
         }
         return cache
@@ -364,14 +402,19 @@ class WhisperEngine(private val context: Context) {
     }
 
     private fun detokenize(tokens: List<Int>): String {
+        Log.d(TAG, "Tokens (${tokens.size}): $tokens")
         val bytes = mutableListOf<Byte>()
         for (id in tokens) {
-            val token = idToToken[id] ?: continue
+            val token = idToToken[id]
+            if (token == null) { Log.w(TAG, "Token $id not in vocab"); continue }
             for (ch in token) {
                 val b = byteDecoder[ch.code]
                 if (b != null) bytes.add(b.code.toByte())
+                else Log.w(TAG, "Token $id char '${ch}' (code=${ch.code}) not in byteDecoder")
             }
         }
+        val hex = bytes.joinToString(" ") { "%02x".format(it) }
+        Log.d(TAG, "Bytes (hex): $hex")
         return String(bytes.toByteArray(), Charsets.UTF_8).trim()
     }
 

@@ -56,10 +56,22 @@ object MelSpectrogram {
         val cosTable = dftCos
         val sinTable = dftSin
 
-        val needed = (nFrames - 1) * hop + nFft
-        val padded = FloatArray(needed).also { buf ->
-            samples.copyInto(buf, 0, 0, minOf(samples.size, needed))
+        // Reflect-pad by n_fft/2 = 200 samples on the left, matching PyTorch's center=True STFT
+        // convention used during Whisper training. Without this, every frame is shifted 200
+        // samples (12.5 ms) late relative to what the model expects, degrading accuracy.
+        //
+        // With center=True:  frame t reads padded[t*hop : t*hop+n_fft]
+        //                    where padded = [reflect(200) | audio | zeros]
+        // Frame 0 is centered on audio sample 0; frame t on audio sample t*hop.
+        val pad    = nFft / 2                           // 200 samples
+        val needed = (nFrames - 1) * hop + nFft        // 480240
+        val padded = FloatArray(needed)
+        // Left reflect: padded[0..pad) = reverse of samples[0..pad)
+        for (i in 0 until pad) {
+            padded[i] = if (pad - 1 - i < samples.size) samples[pad - 1 - i] else 0f
         }
+        // Audio content starts at padded[pad]; remaining slots stay zero (silence padding)
+        samples.copyInto(padded, pad, 0, minOf(samples.size, needed - pad))
 
         val spectrogram = Array(nFrames) { frame ->
             val start    = frame * hop
@@ -133,8 +145,12 @@ object MelSpectrogram {
         val melPoints = DoubleArray(nMels + 2) { i ->
             melToHz(melMin + i * (melMax - melMin) / (nMels + 1))
         }
+        // Keep fractional bin positions — do NOT truncate to Long.
+        // Integer truncation collapses adjacent low-frequency mel points to the
+        // same bin (e.g. bins[0]==bins[1]==0), causing 0/0=NaN in the slope formula
+        // which then poisons the entire spectrogram → encoder → logits chain.
         val bins = DoubleArray(nMels + 2) { i ->
-            (melPoints[i] * (nFft + 1) / sampleRate).toLong().toDouble()
+            melPoints[i] * (nFft + 1) / sampleRate
         }
 
         // Slaney area normalisation: divide each triangle filter by its bandwidth
