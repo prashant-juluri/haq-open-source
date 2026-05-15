@@ -137,13 +137,22 @@ object MelSpectrogram {
             (melPoints[i] * (nFft + 1) / sampleRate).toLong().toDouble()
         }
 
+        // Slaney area normalisation: divide each triangle filter by its bandwidth
+        // in Hz so all 80 filters have equal area. This matches librosa's default
+        // norm="slaney" used when OpenAI generated the Whisper training mel filters:
+        //   librosa.filters.mel(sr=16000, n_fft=400, n_mels=80)
+        //   enorm = 2.0 / (mel_f[m+2] - mel_f[m])
+        // Without this, wide high-frequency filters contribute disproportionate
+        // energy, the encoder sees out-of-distribution features, and the decoder
+        // outputs repetitive garbage tokens (e.g. "!!!!").
         return Array(nMels) { m ->
+            val enorm = (2.0 / (melPoints[m + 2] - melPoints[m])).toFloat()
             FloatArray(nBins) { bin ->
                 val b = bin.toDouble()
                 when {
                     b < bins[m]      -> 0f
-                    b <= bins[m + 1] -> ((b - bins[m]) / (bins[m + 1] - bins[m])).toFloat()
-                    b <= bins[m + 2] -> ((bins[m + 2] - b) / (bins[m + 2] - bins[m + 1])).toFloat()
+                    b <= bins[m + 1] -> ((b - bins[m]) / (bins[m + 1] - bins[m]) * enorm).toFloat()
+                    b <= bins[m + 2] -> ((bins[m + 2] - b) / (bins[m + 2] - bins[m + 1]) * enorm).toFloat()
                     else             -> 0f
                 }
             }
