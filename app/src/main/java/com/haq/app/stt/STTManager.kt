@@ -22,11 +22,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 object STTManager {
 
     private const val GOOGLE_STT_PACKAGE = "com.google.android.googlequicksearchbox"
-    // On devices where googlequicksearchbox is absent, Google STT is bundled
-    // into the TTS package. This service supports Indian languages and should
-    // be preferred over AiAiSpeechRecognitionService (com.google.android.as)
-    // which only accepts a small set of language tags.
     private const val GOOGLE_TTS_PACKAGE  = "com.google.android.tts"
+    // Android System Intelligence — on-device by design, no network required.
+    // Testing whether it accepts Indian language tags (hi-IN, ta-IN, etc.);
+    // previous assumption was that it rejected non-English tags but this was
+    // never verified. Trying as first preference for offline capability.
+    private const val AIAI_PACKAGE        = "com.google.android.as"
 
     // Application context stored on first call — avoids threading issues
     // with Activity contexts and survives configuration changes.
@@ -188,45 +189,39 @@ object STTManager {
             }
         }
 
+        // P1: AiAi (Android System Intelligence) — on-device by design, no network.
+        // Testing whether it accepts Indian language tags; if it does, this gives
+        // us offline STT without Whisper. EXTRA_PREFER_OFFLINE not needed (on-device).
+        val aiaiService = allServices.firstOrNull { info ->
+            info.serviceInfo?.packageName == AIAI_PACKAGE
+        }?.serviceInfo
+        if (aiaiService != null) {
+            val component = ComponentName(aiaiService.packageName, aiaiService.name)
+            Log.d("Haq/STT", "Using AiAi on-device STT service: $component")
+            return RecognitionServiceResult(component, supportsPreferOffline = false)
+        }
+
+        // P2: googlequicksearchbox — supports Indian language tags, network-dependent.
         val services = context.packageManager.queryIntentServices(
-            Intent(RecognitionService.SERVICE_INTERFACE).setPackage(GOOGLE_STT_PACKAGE),
-            0,
-        )
+            Intent(RecognitionService.SERVICE_INTERFACE).setPackage(GOOGLE_STT_PACKAGE), 0)
         val googleService = services.firstOrNull { info ->
             info.serviceInfo?.packageName == GOOGLE_STT_PACKAGE
         }?.serviceInfo
-
         if (googleService != null) {
             val component = ComponentName(googleService.packageName, googleService.name)
             Log.d("Haq/STT", "Using Google STT service: $component")
             return RecognitionServiceResult(component, supportsPreferOffline = true)
         }
 
-        // googlequicksearchbox not found — check if Google STT is bundled in the
-        // TTS package (com.google.android.tts). This is the case on devices where
-        // the traditional Google Search app is absent. Prefer it over AiAi because
-        // it supports Indian language tags (mr-IN, te-IN, hi-IN, etc.) while AiAi
-        // returns ERROR_LANGUAGE_NOT_SUPPORTED (12) for non-English tags.
-        // This service does NOT have downloadable offline models — checkRecognitionSupport
-        // returns ERROR_CANNOT_CHECK_SUPPORT (14), meaning EXTRA_PREFER_OFFLINE=true
-        // causes it to immediately return ERROR_RECOGNIZER_BUSY (12). Use false.
+        // P3: GoogleTTSRecognitionService — supports Indian language tags but network-only.
+        // checkRecognitionSupport returns ERROR_CANNOT_CHECK_SUPPORT (14); no offline models.
+        // EXTRA_PREFER_OFFLINE=true causes immediate ERROR_RECOGNIZER_BUSY (12). Use false.
         val ttsBundled = allServices.firstOrNull { info ->
             info.serviceInfo?.packageName == GOOGLE_TTS_PACKAGE
         }?.serviceInfo
         if (ttsBundled != null) {
             val component = ComponentName(ttsBundled.packageName, ttsBundled.name)
             Log.d("Haq/STT", "Using GoogleTTS-bundled STT service: $component")
-            return RecognitionServiceResult(component, supportsPreferOffline = false)
-        }
-
-        // Last resort: AiAi or any other google-named service. AiAi is on-device
-        // by design so EXTRA_PREFER_OFFLINE is irrelevant (and causes ERROR 12).
-        val googleFallback = allServices.firstOrNull { info ->
-            info.serviceInfo?.packageName?.contains("google", ignoreCase = true) == true
-        }?.serviceInfo
-        if (googleFallback != null) {
-            val component = ComponentName(googleFallback.packageName, googleFallback.name)
-            Log.d("Haq/STT", "Using Google STT last-resort fallback: $component")
             return RecognitionServiceResult(component, supportsPreferOffline = false)
         }
 
