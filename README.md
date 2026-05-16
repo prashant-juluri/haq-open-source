@@ -147,6 +147,22 @@ A deliberate design choice: Gemma is used for text-in / text-out RAG rather than
 
 ---
 
+## Known Limitations
+
+We'd rather be honest about these than have a judge discover them.
+
+**Whisper inference latency** — On Snapdragon 6/7 devices, Whisper-small int8 takes ~4 seconds to transcribe a 10-second audio chunk. This is the ceiling for on-device ONNX inference on this chip class without hardware acceleration. Float16 was evaluated and rejected (4-minute inference). The latency is noticeable but acceptable for a welfare query workflow where the user is unlikely to be mid-sprint.
+
+**Telugu onboarding is non-deterministic** — Onboarding uses AiAi in auto-detect mode (null language tag). On our test device, this silently picks up the Telugu offline speech pack that Google Play Services had installed in the background. On a device where Telugu has never been set as a system language, this pack may not be present and onboarding STT will fail. The main-app Telugu experience (Whisper) is unaffected — this is an onboarding-only issue.
+
+**Odia and Assamese always require network** — These two languages are not in Whisper's supported language set and have no AiAi offline pack. STT for or/as routes to Google's network recogniser. Everything else (Gemma, TTS, RAG) still runs offline.
+
+**First-launch download burden** — Gemma 4 E2B is 2.4 GB; Whisper-small is ~250 MB. Both require WiFi. On a 10 Mbps connection that is roughly 30–40 minutes of download before the app is fully operational. This is a hard constraint of on-device model delivery and not something that can be engineered away at this model size.
+
+**No streaming transcription** — Whisper transcribes complete chunks, not token-by-token. The user speaks, pauses, then sees the transcript. Real-time word-by-word display is not implemented.
+
+---
+
 ## Privacy
 
 No data leaves the device. Ever. There is no backend, no analytics, no crash reporting, no account system. The user's profile, queries, and entitlement data are stored locally in Room/SQLite and protected by Android BiometricPrompt. The only network calls are one-time model downloads (Gemma: ~2.4 GB, Whisper: ~250 MB) over WiFi.
