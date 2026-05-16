@@ -8,6 +8,7 @@ import com.haq.app.data.ProfileManager
 import com.haq.app.data.SessionManager
 import com.haq.app.inference.GemmaManager
 import com.haq.app.stt.STTManager
+import com.haq.app.stt.WhisperDownloadManager
 import com.haq.app.tts.TTSManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 sealed class OnboardingStep {
@@ -195,6 +197,32 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             // when it can't find a local model but has network access).
             STTManager.triggerOfflineModelDownload(getApplication(), languageCode)
 
+            // ── Whisper download (parallel with voice/model preparation) ─────────
+            // For te/ml/kn/ta/bn/gu/mr/ne: download encoder+decoder+tokenizer
+            // from HuggingFace on first use. AiAi (en/hi) and network (or/as)
+            // languages skip this entirely.
+            val whisperReady = AtomicBoolean(
+                !STTManager.isWhisperLanguage(languageCode) ||
+                WhisperDownloadManager.isAvailable(getApplication())
+            )
+            if (!whisperReady.get()) {
+                launch {
+                    try {
+                        Log.d("Haq/Onboard", "Starting Whisper model download for $languageCode")
+                        WhisperDownloadManager.download(getApplication()) { pct ->
+                            _preparingStatus.value = "Getting Haq ready... $pct%"
+                        }
+                        whisperReady.set(true)
+                        Log.d("Haq/Onboard", "Whisper model download complete")
+                    } catch (e: Exception) {
+                        Log.e("Haq/Onboard", "Whisper download failed: ${e.message}")
+                        // Don't block forever — surface InstallingVoicePacks escape hatch
+                        // so the user has an exit. STT will throw if models are still missing.
+                        whisperReady.set(true)
+                    }
+                }
+            }
+
             // Counter of 5 s cycles to wait before the next testSpeak() call.
             // 0 = test immediately, N > 0 = wait N more cycles.
             var testSpeakCountdown = 0
@@ -208,16 +236,24 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             val escapeAfterFailures = 6
 
             while (true) {
-                val modelReady   = GemmaManager.isModelReady(getApplication())
-                val voiceMissing = !TTSManager.checkLanguageSupport(languageCode)
-                updatePreparingStatus(voiceMissing, !modelReady)
+                val modelReady    = GemmaManager.isModelReady(getApplication())
+                val voiceMissing  = !TTSManager.checkLanguageSupport(languageCode)
+                val whisperDone   = whisperReady.get()
+
+                // Only update the status text here when not already showing download progress —
+                // the download coroutine writes "Downloading offline speech model... N%" while
+                // active; we overwrite only when the download is complete or not needed.
+                if (whisperDone) updatePreparingStatus(voiceMissing, !modelReady)
+
                 Log.d("Haq/Onboard",
                     "Single-lang readiness poll: lang=$languageCode " +
                     "modelReady=$modelReady voiceMissing=$voiceMissing " +
+                    "whisperReady=$whisperDone " +
                     "testSpeakIn=${testSpeakCountdown * 5}s " +
                     "voiceMissingCycles=$voiceMissingCycles")
 
-                if (modelReady) {
+                // Gate: all three must be ready before testing synthesis
+                if (modelReady && whisperDone) {
                     if (voiceMissing) {
                         // Voice entry absent — re-signal download intent via setLanguage.
                         TTSManager.ensureVoiceDownloading(languageCode)
@@ -225,17 +261,23 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                         testSpeakFailures  = 0
                         voiceMissingCycles++
 
-                        // If voice data is simply not available on this device (e.g. language
-                        // not supported by Google TTS), voiceMissing stays true indefinitely
-                        // and testSpeakFailures never increments — the screen hangs forever.
-                        // Surface InstallingVoicePacks after the same threshold so the user
-                        // is not stuck waiting with no feedback or escape.
-                        if (voiceMissingCycles >= escapeAfterFailures &&
+                        // Voice still missing: if offline, send user to the WiFi screen
+                        // after 2 cycles (~10 s) — enough time for TTS to initialise
+                        // but fast enough to give clear feedback.
+                        // If online, keep waiting — the download is in progress.
+                        if (voiceMissingCycles >= 2 &&
                             _step.value is OnboardingStep.PreparingVoices) {
-                            Log.w("Haq/Onboard",
-                                "voiceMissing for $voiceMissingCycles cycles — " +
-                                "surfacing InstallingVoicePacks escape screen")
-                            _step.value = OnboardingStep.InstallingVoicePacks
+                            if (!STTManager.isNetworkAvailable(getApplication())) {
+                                Log.w("Haq/Onboard",
+                                    "voiceMissing for $voiceMissingCycles cycles and offline — " +
+                                    "returning to NoWifi screen")
+                                _step.value = OnboardingStep.NoWifi
+                            } else {
+                                Log.d("Haq/Onboard",
+                                    "voiceMissing for $voiceMissingCycles cycles but online — " +
+                                    "staying on PreparingVoices, download in progress")
+                                voiceMissingCycles = 0  // reset so we keep re-checking
+                            }
                         }
                     } else {
                         voiceMissingCycles = 0
@@ -257,32 +299,36 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                                 "(failure $testSpeakFailures/$escapeAfterFailures) — " +
                                 "download in progress; next check in 30 s")
 
-                            // After ~3 minutes of failed synthesis, surface the
-                            // InstallingVoicePacks screen so the user sees progress and
-                            // has a Continue option. Background polling continues — if
-                            // the download finishes, onTtsDataInstalled() advances directly.
-                            if (testSpeakFailures >= escapeAfterFailures &&
-                                _step.value is OnboardingStep.PreparingVoices) {
-                                Log.w("Haq/Onboard",
-                                    "testSpeak failed $testSpeakFailures times — " +
-                                    "surfacing InstallingVoicePacks escape screen")
-                                _step.value = OnboardingStep.InstallingVoicePacks
+                            // On first testSpeak failure: if offline, the voice requires
+                            // network synthesis data that can't download — send to WiFi
+                            // screen immediately. If online, the data is downloading
+                            // silently; reset and keep polling every 30 s.
+                            if (_step.value is OnboardingStep.PreparingVoices) {
+                                if (!STTManager.isNetworkAvailable(getApplication())) {
+                                    Log.w("Haq/Onboard",
+                                        "testSpeak failed offline — returning to NoWifi screen")
+                                    _step.value = OnboardingStep.NoWifi
+                                } else {
+                                    Log.d("Haq/Onboard",
+                                        "testSpeak failed but online — download in progress, " +
+                                        "next check in 30 s")
+                                    testSpeakFailures = 0  // reset so we keep re-checking
+                                }
                             }
                         } else {
                             testSpeakCountdown--
                         }
                     }
                 } else {
+                    // Either Gemma isn't ready yet, or Whisper is still downloading.
                     testSpeakCountdown = 0
                     testSpeakFailures  = 0
                     voiceMissingCycles = 0
                 }
 
-                // Keep polling on both PreparingVoices and InstallingVoicePacks —
-                // the background download may complete while the escape screen is shown.
-                val currentStep = _step.value
-                if (currentStep !is OnboardingStep.PreparingVoices &&
-                    currentStep !is OnboardingStep.InstallingVoicePacks) break
+                // Keep polling only while on PreparingVoices. NoWifi breaks the loop —
+                // retryAfterWifi() will start a fresh polling job when WiFi returns.
+                if (_step.value !is OnboardingStep.PreparingVoices) break
 
                 delay(5_000L)
             }
@@ -292,10 +338,9 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun updatePreparingStatus(voiceMissing: Boolean, modelMissing: Boolean, sttMissing: Boolean = false) {
         _preparingStatus.value = when {
-            modelMissing && voiceMissing -> "Downloading model and voices..."
-            modelMissing                 -> "Downloading AI model..."
-            sttMissing                   -> "Downloading offline speech model..."
-            else                         -> "Preparing voices..."
+            modelMissing || sttMissing -> "Getting Haq ready..."
+            voiceMissing               -> "Setting up your language..."
+            else                       -> "Almost ready..."
         }
     }
 
@@ -583,7 +628,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     /** Called when the user taps Retry on the NoWifi screen. Re-checks connectivity. */
     fun retryAfterWifi() {
-        if (STTManager.requiresNetwork(selectedLanguage) && !STTManager.isNetworkAvailable(getApplication())) {
+        if (!STTManager.isNetworkAvailable(getApplication())) {
             Log.d("Haq/Onboard", "retryAfterWifi: still offline for $selectedLanguage")
             return  // stay on NoWifi screen
         }

@@ -32,8 +32,25 @@ object STTManager {
     // googlequicksearchbox with network.
     private val AIAI_CAPABLE = setOf("en-IN", "hi-IN")
 
-    /** Returns true when [languageCode] needs a network connection for STT. */
-    fun requiresNetwork(languageCode: String): Boolean = toBcp47(languageCode) !in AIAI_CAPABLE
+    // Two-letter codes handled by Whisper ONNX on-device — no network required.
+    // or/as are NOT in this set (Odia/Assamese are not in Whisper's 99 languages).
+    private val WHISPER_LANGUAGES = setOf("te", "ml", "kn", "ta", "bn", "gu", "mr", "ne")
+
+    // Singleton WhisperEngine — initialised lazily on first use.
+    private var whisperEngine: WhisperEngine? = null
+
+    /** True when [languageCode] is handled by Whisper ONNX (not SpeechRecognizer). */
+    fun isWhisperLanguage(languageCode: String): Boolean = languageCode in WHISPER_LANGUAGES
+
+    /**
+     * Returns true when [languageCode] needs a network connection for STT.
+     * AiAi languages (en, hi) and Whisper languages are fully offline.
+     * or/as require network.
+     */
+    fun requiresNetwork(languageCode: String): Boolean {
+        if (languageCode in WHISPER_LANGUAGES) return false
+        return toBcp47(languageCode) !in AIAI_CAPABLE
+    }
 
     /**
      * Returns true when the device has an active internet-capable network.
@@ -329,13 +346,54 @@ object STTManager {
     /**
      * Main app: pass the user's profile language code ("hi", "te", "ml",
      * "kn", "en") or a BCP-47 tag. Pass null for device auto-detection.
+     *
+     * For [WHISPER_LANGUAGES] (te/ml/kn/ta/bn/gu/mr/ne) the call bypasses
+     * SpeechRecognizer entirely and runs Whisper ONNX on-device.
+     * For en/hi it uses AiAi (on-device via SpeechRecognizer).
+     * For or/as it falls through to the network STT path.
      */
     suspend fun recordAndTranscribe(
         context: Context,
         languageTag: String? = null,
+        onVadComplete: (() -> Unit)? = null,
     ): String {
         appContext = context.applicationContext
+        val twoLetter = languageTag?.let { toTwoLetter(it) }
+        if (twoLetter != null && twoLetter in WHISPER_LANGUAGES) {
+            return transcribeWithWhisper(context.applicationContext, twoLetter, onVadComplete)
+        }
         return recordAndTranscribeWithLanguage(languageTag = languageTag, isOnboarding = false)
+    }
+
+    // ── Whisper path ──────────────────────────────────────────────────────────
+
+    /**
+     * Records audio with VAD and transcribes using Whisper ONNX on-device.
+     * Initialises [WhisperEngine] lazily on first call (~1-2 s overhead once).
+     * If model files are not present, throws so the caller can surface an error.
+     */
+    private suspend fun transcribeWithWhisper(
+        context: Context,
+        langCode: String,
+        onVadComplete: (() -> Unit)? = null,
+    ): String {
+        if (!WhisperEngine.isAvailable(context)) {
+            throw IllegalStateException(
+                "Whisper models not found in filesDir/whisper/ — " +
+                "adb push encoder_model.onnx, decoder_model_merged.onnx, tokenizer.json"
+            )
+        }
+        val engine = whisperEngine ?: WhisperEngine(context).also {
+            it.init()
+            whisperEngine = it
+        }
+        val recorder = AudioRecorder()
+        val samples  = recorder.recordWithVad()
+        if (samples.isEmpty()) return ""
+        // VAD complete — recording stopped, inference about to start.
+        // Signal caller so UI can transition from LISTENING to PROCESSING.
+        onVadComplete?.invoke()
+        return engine.transcribe(samples, WhisperConfig.languageToken(langCode))
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
@@ -456,6 +514,17 @@ object STTManager {
         }
     }
 
+    /**
+     * Releases the WhisperEngine ONNX sessions and native memory.
+     * Call from HaqViewModel.onCleared() so the ~144 MB of ONNX session memory
+     * is released when the ViewModel is destroyed rather than waiting for GC.
+     */
+    fun shutdown() {
+        whisperEngine?.close()
+        whisperEngine = null
+        Log.d("Haq/STT", "STTManager shutdown — WhisperEngine released")
+    }
+
     /** Maps two-letter language codes to BCP-47 tags for SpeechRecognizer. */
     private fun toBcp47(languageCode: String): String = when (languageCode) {
         "hi" -> "hi-IN"
@@ -472,4 +541,10 @@ object STTManager {
         "en" -> "en-IN"
         else -> languageCode
     }
+
+    /**
+     * Strips the region suffix from a BCP-47 tag or passes a two-letter code through.
+     * "te-IN" → "te", "te" → "te", null → null.
+     */
+    private fun toTwoLetter(tag: String): String = tag.substringBefore('-')
 }

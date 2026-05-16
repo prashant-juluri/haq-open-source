@@ -17,6 +17,7 @@ import com.haq.app.inference.EngineState
 import com.haq.app.inference.GemmaManager
 import com.haq.app.inference.ModelDownloadManager
 import com.haq.app.stt.STTManager
+import com.haq.app.stt.WhisperDownloadManager
 import com.haq.app.tts.TTSManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +61,11 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     val noWifiForMic: StateFlow<Boolean> = _noWifiForMic.asStateFlow()
 
     fun dismissNoWifi() { _noWifiForMic.value = false }
+
+    // Set when TTS voice is unavailable for the active language (e.g. offline, voice not installed).
+    // Cleared at the start of each new query so the banner disappears on the next turn.
+    private val _ttsUnavailable = MutableStateFlow(false)
+    val ttsUnavailable: StateFlow<Boolean> = _ttsUnavailable.asStateFlow()
 
     fun getAllProfiles(): Flow<List<UserProfile>> = ProfileManager.getAllProfiles()
 
@@ -243,6 +249,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             TTSManager.stop()
+            _ttsUnavailable.value = false   // clear any previous "text only" banner
             delay(300) // allow TTS to release audio focus
             val langTag = _activeLanguage.value
             if (STTManager.requiresNetwork(langTag) && !STTManager.isNetworkAvailable(getApplication())) {
@@ -250,10 +257,41 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 _noWifiForMic.value = true
                 return@launch
             }
+
+            // Whisper languages (te/ml/kn/ta/bn/gu/mr/ne): if model files are not present
+            // (e.g. fresh install, data cleared), download them before starting STT.
+            // Normally this happens during onboarding PreparingVoices — this is a safety net.
+            if (STTManager.isWhisperLanguage(langTag) &&
+                !WhisperDownloadManager.isAvailable(getApplication())) {
+                Log.d("Haq/VM", "Whisper models missing for $langTag — downloading now")
+                _appState.value = AppState.THINKING
+                try {
+                    WhisperDownloadManager.download(getApplication()) { pct ->
+                        _responseText.value = "Downloading offline speech model... $pct%"
+                    }
+                    _responseText.value = ""
+                    _appState.value = AppState.READY
+                    // Models are now ready — user taps mic again to start listening.
+                    return@launch
+                } catch (e: Exception) {
+                    Log.e("Haq/VM", "Whisper download failed: ${e.message}")
+                    _responseText.value = "Download failed. Please connect to the internet and try again."
+                    _appState.value = AppState.READY
+                    return@launch
+                }
+            }
+
             _appState.value = AppState.LISTENING
             try {
                 Log.d("Haq/VM", "Mic pressed: activeLanguage=$langTag profile=${activeProfile?.name}")
-                val transcript = STTManager.recordAndTranscribe(getApplication(), langTag)
+                val transcript = STTManager.recordAndTranscribe(
+                    context = getApplication(),
+                    languageTag = langTag,
+                    onVadComplete = {
+                        _appState.value = AppState.THINKING
+                        _responseText.value = ""
+                    },
+                )
                 Log.d("Haq/STT", "Transcript: \"$transcript\"")
                 if (transcript.isNotBlank()) {
                     submitQuery(transcript)
@@ -520,6 +558,26 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         fullResponse: StringBuilder,
         sentenceBuffer: StringBuilder,
     ) {
+        // Once TTS fails for any sentence we stop trying for the rest of this response.
+        // This avoids repeated slow failure attempts when the voice is offline/not installed.
+        var ttsErrorSeen = false
+
+        fun speak(text: String) {
+            if (ttsErrorSeen) return
+            TTSManager.speak(
+                text = text,
+                languageCode = langCode,
+                queueMode = TextToSpeech.QUEUE_ADD,
+                onOutputError = {
+                    if (!ttsErrorSeen) {
+                        ttsErrorSeen = true
+                        _ttsUnavailable.value = true
+                        Log.w("Haq/VM", "TTS unavailable for $langCode — text-only mode for this response")
+                    }
+                },
+            )
+        }
+
         GemmaManager.generateResponse(query).collect { token ->
             fullResponse.append(token)
             sentenceBuffer.append(token)
@@ -536,16 +594,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                     .replace("*", "")
                     .replace("#", "")
                     .trim()
-                if (sentence.length >= 15) {
-                    TTSManager.speak(
-                        text = sentence,
-                        languageCode = langCode,
-                        queueMode = TextToSpeech.QUEUE_ADD,
-                        onOutputError = {
-                            Log.w("Haq/VM", "Sentence speak failed for $langCode — skipping")
-                        },
-                    )
-                }
+                if (sentence.length >= 15) speak(sentence)
                 sentenceBuffer.clear()
                 sentenceBuffer.append(buf.substring(boundaryIdx + 1))
             }
@@ -556,16 +605,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             .replace("*", "")
             .replace("#", "")
             .trim()
-        if (remaining.length >= 5) {
-            TTSManager.speak(
-                text = remaining,
-                languageCode = langCode,
-                queueMode = TextToSpeech.QUEUE_ADD,
-                onOutputError = {
-                    Log.w("Haq/VM", "Remaining speak failed for $langCode — skipping")
-                },
-            )
-        }
+        if (remaining.length >= 5) speak(remaining)
     }
 
     /** Language-aware message shown when both the primary and retry queries fail. */
@@ -632,6 +672,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        STTManager.shutdown()
         TTSManager.shutdown()
         GemmaManager.shutdown()
     }
