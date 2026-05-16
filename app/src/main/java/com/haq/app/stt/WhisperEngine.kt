@@ -42,8 +42,8 @@ class WhisperEngine(private val context: Context) {
 
         fun isAvailable(context: Context): Boolean {
             val base = File(context.filesDir, "whisper")
-            return File(base, "encoder_model.onnx").exists() &&
-                   File(base, "decoder_model_merged.onnx").exists() &&
+            return File(base, WhisperConfig.ENCODER_MODEL.removePrefix("whisper/")).exists() &&
+                   File(base, WhisperConfig.DECODER_MODEL.removePrefix("whisper/")).exists() &&
                    File(base, "tokenizer.json").exists()
         }
     }
@@ -75,8 +75,8 @@ class WhisperEngine(private val context: Context) {
         }
         val base = File(context.filesDir, "whisper")
 
-        encSession       = env.createSession(File(base, "encoder_model.onnx").absolutePath, opts)
-        decMergedSession = env.createSession(File(base, "decoder_model_merged.onnx").absolutePath, opts)
+        encSession       = env.createSession(File(base, WhisperConfig.ENCODER_MODEL.removePrefix("whisper/")).absolutePath, opts)
+        decMergedSession = env.createSession(File(base, WhisperConfig.DECODER_MODEL.removePrefix("whisper/")).absolutePath, opts)
 
         mergedKvInputNames = decMergedSession!!.inputNames
             .filter { "past_key_values" in it }.sorted()
@@ -288,6 +288,20 @@ class WhisperEngine(private val context: Context) {
             if (nextToken == WhisperConfig.TOKEN_EOT || nextToken >= WhisperConfig.TOKEN_SOT)
                 return generated
             generated.add(nextToken)
+
+            // Repetition guard: stop if the model is stuck in a loop.
+            // Two patterns to catch:
+            // 1. Single-token loop (A A A A...): last 8 all identical.
+            // 2. Two-token alternation (A B A B...): last 16 have ≤2 unique token IDs.
+            // Both are common Whisper failure modes for low-resource languages.
+            if (generated.size >= 8 && generated.takeLast(8).all { it == nextToken }) {
+                Log.w(TAG, "Single-token repetition at ${generated.size}, stopping")
+                return generated.dropLast(7)
+            }
+            if (generated.size >= 16 && generated.takeLast(16).toSet().size <= 2) {
+                Log.w(TAG, "Low-diversity repetition at ${generated.size}, stopping")
+                return generated.dropLast(15)
+            }
         }
 
         return generated
