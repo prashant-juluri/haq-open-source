@@ -11,8 +11,9 @@ Tagline: Your rights. Your language. No middleman.
 
 ## Non-negotiable constraints
 - Gemma inference, TTS, and RAG run fully on-device with no network.
-- STT: en and hi work offline via AiAi. All other Indian languages
-  require WiFi for STT only — everything else remains on-device.
+- STT: en and hi work offline via AiAi. te/ml/kn/ta/bn/gu/mr/ne work
+  offline via Whisper after a one-time WiFi download (~250 MB). or and as
+  always require WiFi (not in Whisper's language set).
 - No Firebase. No remote database. No cloud inference of any kind.
 - If a suggested solution requires internet for Gemma, TTS, or RAG, it is wrong.
 
@@ -22,13 +23,14 @@ Tagline: Your rights. Your language. No middleman.
 - STT: Three-tier language-aware routing:
   - AiAi (`com.google.android.as`): en-IN (offline, pre-installed) and
     hi-IN (offline, downloads silently on first WiFi launch via `triggerModelDownload`)
-  - Whisper-tiny ONNX (via ONNX Runtime Android): te, ml, kn, ta, bn, gu, mr, ne —
-    fully offline, bypasses SpeechRecognizer entirely; uses AudioRecorder + VAD
+  - Whisper-small int8-quantized ONNX (via ONNX Runtime Android): te, ml, kn, ta, bn, gu, mr, ne —
+    fully offline after one-time ~250 MB WiFi download; bypasses SpeechRecognizer entirely;
+    uses AudioRecorder + VAD
   - GoogleTTSRecognitionService: or, as only (Odia/Assamese — not in Whisper's 99 languages;
-    WiFi required for these two)
+    WiFi required always for these two)
   - Onboarding always passes null language tag → AiAi auto-detect, fully offline
-  - WiFi prompt shown in onboarding (`NoWifi` step) and main app (AlertDialog)
-    only for or/as; all other languages are offline-capable
+  - WiFi prompt shown in onboarding (`NoWifi` step) and main app (AlertDialog) for or/as
+    (always) and for te/ml/kn/ta/bn/gu/mr/ne on first use until Whisper models are cached
 - TTS: Android TTS API (Google TTS engine preferred explicitly)
 - Storage: SQLite via Room
 - Vector search: sqlite-vec
@@ -46,7 +48,8 @@ Minimum RAM: 4GB
 All 12 at launch: Hindi (hi), Telugu (te), Malayalam (ml), Kannada (kn),
 Tamil (ta), Bengali (bn), Gujarati (gu), Marathi (mr), Odia (or),
 Assamese (as), Nepali (ne), English (en).
-Offline STT: en, hi. WiFi STT: all others.
+Offline STT: en, hi (AiAi, always); te/ml/kn/ta/bn/gu/mr/ne (Whisper, after one-time WiFi download).
+WiFi required always: or, as (not in Whisper's language set).
 Architecture must be language-agnostic — adding a new language 
 should require no code changes, only asset additions.
 
@@ -149,11 +152,14 @@ Prompt API / AICore without touching any other code.
 Never call LiteRT APIs directly from ViewModel or UI layer.
 
 ## Current build stage
-WEEK 4 IN PROGRESS — Whisper ONNX offline STT for 8 Indian languages:
+WEEK 4 COMPLETE — Hackathon-ready. Both end-to-end scenarios verified:
+- English offline from start (AiAi en-IN, no network)
+- Telugu: WiFi prompt → Whisper download → offline STT permanently thereafter
+Active branch: feat/whisper-dravidian (pushed, not merged to main)
 - AiAi on-device STT: en-IN (pre-installed), hi-IN (downloads on first WiFi launch)
-- Whisper-tiny ONNX: te, ml, kn, ta, bn, gu, mr, ne — fully offline, no SpeechRecognizer
+- Whisper-small int8-quantized ONNX: te, ml, kn, ta, bn, gu, mr, ne — fully offline after download
 - GoogleTTSRecognitionService: network path for or, as only (not in Whisper's 99 languages)
-- WiFi-required prompt: NoWifi step in onboarding + AlertDialog in main app (or/as only)
+- WiFi-required prompt: NoWifi step in onboarding + AlertDialog in main app
 - Onboarding: tap-to-speak complete, language-aware TTS voice selection
 - PreparingVoices gates on Gemma model ready + TTS voice testSpeak passing
 - RAG pipeline working end to end with all three knowledge bases
@@ -167,19 +173,23 @@ If models are missing in the main app (fresh install, data cleared), tapping the
 triggers an inline download and shows progress in the response text area. User taps mic
 again once complete.
 
-Source: onnx-community/whisper-tiny on HuggingFace (official ONNX community export)
-  https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/encoder_model.onnx
-  https://huggingface.co/onnx-community/whisper-tiny/resolve/main/onnx/decoder_model_merged.onnx
-  https://huggingface.co/onnx-community/whisper-tiny/resolve/main/tokenizer.json
+Source: onnx-community/whisper-small on HuggingFace (int8-quantized ONNX export)
+  https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/encoder_model_quantized.onnx
+  https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/decoder_model_merged_quantized.onnx
+  https://huggingface.co/onnx-community/whisper-small/resolve/main/tokenizer.json
 
-Sizes: encoder_model.onnx ~31 MB, decoder_model_merged.onnx ~113 MB, tokenizer.json <1 MB
-Total: ~145 MB, downloaded once, stored in filesDir/whisper/, survives app updates
+Sizes: encoder_model_quantized.onnx ~92 MB, decoder_model_merged_quantized.onnx ~157 MB, tokenizer.json <1 MB
+Total: ~250 MB, downloaded once, stored in filesDir/whisper/, survives app updates
+
+Why whisper-small int8 over whisper-tiny: significantly better accuracy on Dravidian languages.
+Why not fp16: no ORT hardware fp16 acceleration on Snapdragon 6/7 — inference takes ~4 min for 5s audio.
 
 ## Known pending items
 - PreparingVoices does not detect WiFi re-enable while polling — user must
   kill and relaunch if they enable WiFi while stuck on that screen (or/as only)
-- KV cache tensor names are discovered dynamically — log Decoder inputs/outputs
-  on first launch to verify name conventions match the onnx-community/whisper-tiny export
+- Telugu onboarding works via AiAi auto-detect only if device has Telugu offline pack
+  silently installed by Google Play Services — non-deterministic on arbitrary devices;
+  acceptable for hackathon since main-app Telugu STT goes through Whisper
 
 ## Development Principles
 
@@ -189,7 +199,7 @@ Total: ~145 MB, downloaded once, stored in filesDir/whisper/, survives app updat
 - **SpeechRecognizer must run on the main Looper.** Always use `Handler(Looper.getMainLooper()).post {}` to create and call `startListening()`. `withContext(Dispatchers.Main)` is insufficient — SpeechRecognizer's internal ServiceConnection binds to the thread Looper, not the Kotlin dispatcher. `destroy()` must also be posted to the main Looper from any callback thread.
 - **STT service routing is language-aware.** `preferredRecognitionService(context, bcp47)` selects AiAi only when `bcp47 == null` (onboarding auto-detect) or `bcp47 in AIAI_CAPABLE` (`{"en-IN", "hi-IN"}`). All other languages fall through to `googlequicksearchbox` (P2) or `GoogleTTSRecognitionService` (P3) with `EXTRA_PREFER_OFFLINE = false`. Never set `EXTRA_PREFER_OFFLINE = true` for AiAi — it returns `ERROR_RECOGNIZER_BUSY (12)` immediately.
 - **AiAi is on-device by design; do not set `EXTRA_PREFER_OFFLINE`.** AiAi (`com.google.android.as`) handles en-IN offline natively. hi-IN is in its `supportedOnDeviceLanguages` list and is downloaded via `triggerModelDownload()` during `PreparingVoices`. AiAi's downloaded models live in AiAi's own app storage — they survive Haq reinstalls.
-- **WiFi check before STT for network-required languages.** `STTManager.requiresNetwork(langCode)` returns true for any language outside `AIAI_CAPABLE`. `STTManager.isNetworkAvailable(context)` uses `NetworkCapabilities.NET_CAPABILITY_INTERNET` (API 29+). `OnboardingViewModel.selectLanguage()` checks both and routes to `OnboardingStep.NoWifi` if offline. `HaqViewModel.onMicButtonPressed()` checks both and sets `noWifiForMic = true` if offline, which surfaces an `AlertDialog`.
+- **WiFi check before STT for network-required languages.** `STTManager.requiresNetwork(langCode)` returns true for or/as (always need network) and for Whisper languages (te/ml/kn/ta/bn/gu/mr/ne) when Whisper models are not yet cached. `STTManager.isNetworkAvailable(context)` uses `NetworkCapabilities.NET_CAPABILITY_INTERNET` (API 29+). `OnboardingViewModel.selectLanguage()` checks both and routes to `OnboardingStep.NoWifi` if offline. `HaqViewModel.onMicButtonPressed()` checks both and sets `noWifiForMic = true` if offline, which surfaces an `AlertDialog`.
 - **Prefer Google TTS and STT engines explicitly.** On devices with OEM TTS/STT engines (Samsung, Xiaomi, etc.), always prefer Google TTS (`com.google.android.tts`) and Google STT (`com.google.android.googlequicksearchbox`) by initialising with explicit engine/component names. Fall back to system default only if Google engines are not installed.
 - **Voice selection uses `findBestVoice()` priority:** P1 non-OEM offline non-stub exact locale, P2 non-OEM online non-stub exact locale, P3 any offline non-stub exact locale (Samsung fallback), P4 any non-stub exact locale, P5 any non-stub language-only, P6 stub/null last resort. **Stubs (names ending in `-language`) are excluded at every tier P1–P5.** Never call `setLanguage()` in `speak()` — always use `tts.voice = findBestVoice(...)`.
 - **`LanguageSelect` is the first visible step — shown immediately on launch.** After the user picks a language, `selectLanguage()` checks connectivity (WiFi prompt if needed), then sets `_step = PreparingVoices` and calls `startSingleLanguageReadinessPolling(languageCode)`. That polling loop gates on BOTH `GemmaManager.isModelReady()` AND `TTSManager.testSpeak(languageCode)`.
@@ -210,7 +220,7 @@ Total: ~145 MB, downloaded once, stored in filesDir/whisper/, survives app updat
 - Separate translation APIs (Gemma handles multilingual natively)
 - Loading the model from external storage or downloading on first run
 - The .task format — the correct format is .litertlm
-- Whisper ONNX for the current build — it is stashed on feat/whisper-offline-stt
+- Per-language fine-tuned whisper-small models (~450 MB each) — stashed on feat/whisper-per-language-finetuned; single shared whisper-small is superior UX
 
 ## Model
 - Model: Gemma 4 E2B via LiteRT-LM (on-device, offline)
@@ -223,6 +233,6 @@ Total: ~145 MB, downloaded once, stored in filesDir/whisper/, survives app updat
 - If missing, it requires WiFi and downloads from HuggingFace with progress reporting
 - Download URL: `https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm`
 - Uses an atomic temp-file rename to avoid partial writes
-- INTERNET permission exists only for this model download and network STT
+- INTERNET permission exists only for this model download, Whisper model download, and network STT (or/as)
 - After download completes, all inference runs fully offline
 - Do NOT suggest bundling the model in assets or requiring adb push
