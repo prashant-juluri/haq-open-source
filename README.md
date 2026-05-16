@@ -96,6 +96,8 @@ The entire response — scheme name, amounts, documents, action steps, helpline 
 
 The InferenceEngine interface abstracts all LiteRT calls so the ViewModel and UI layers have no direct model dependency. Post-hackathon, this swaps to ML Kit GenAI Prompt API / AICore without touching any other code.
 
+A deliberate design choice: Gemma is used for text-in / text-out RAG rather than its native voice input mode. Injecting structured scheme context — eligibility rules, benefit amounts, document lists — into a text prompt is straightforward and deterministic. Doing the same via voice prompt injection would require encoding structured data as spoken language, making it far harder to control what the model sees and to iterate on retrieval quality. Text prompting keeps the RAG context explicit and auditable.
+
 ---
 
 ## Challenges and How We Solved Them
