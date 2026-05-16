@@ -289,18 +289,39 @@ class WhisperEngine(private val context: Context) {
                 return generated
             generated.add(nextToken)
 
-            // Repetition guard: stop if the model is stuck in a loop.
-            // Two patterns to catch:
-            // 1. Single-token loop (A A A A...): last 8 all identical.
-            // 2. Two-token alternation (A B A B...): last 16 have ≤2 unique token IDs.
-            // Both are common Whisper failure modes for low-resource languages.
+            // Repetition guard: stop if the model is stuck in a hallucination loop.
+            // Catches three pattern classes common in low-resource Indian language Whisper:
+            //
+            // 1. Single-token loop      A A A A A A A A
+            // 2. Short N-gram cycle     A B C A B C A B C  (N = 2..6)
+            //    — "నినిని" tokenizes as a 3-token cycle; the old ≤2-unique guard missed it.
+            //    — Check: last 3×N tokens form N repeated copies of the same N-gram.
+            // 3. Low-diversity fallback last 32 tokens have ≤3 unique IDs (catches any
+            //    short cycle the N-gram check hasn't seen 3 full copies of yet).
             if (generated.size >= 8 && generated.takeLast(8).all { it == nextToken }) {
                 Log.w(TAG, "Single-token repetition at ${generated.size}, stopping")
                 return generated.dropLast(7)
             }
-            if (generated.size >= 16 && generated.takeLast(16).toSet().size <= 2) {
+            if (generated.size >= 6) {
+                val tail = generated
+                for (n in 2..6) {
+                    val needed = n * 3          // require 3 full repetitions before firing
+                    if (tail.size < needed) continue
+                    val pattern = tail.subList(tail.size - n, tail.size)
+                    var allMatch = true
+                    for (rep in 1..2) {
+                        val start = tail.size - n * (rep + 1)
+                        if (tail.subList(start, start + n) != pattern) { allMatch = false; break }
+                    }
+                    if (allMatch) {
+                        Log.w(TAG, "N-gram($n) cycle ×3 at ${generated.size}, stopping")
+                        return generated.dropLast(n * 3 - 1)
+                    }
+                }
+            }
+            if (generated.size >= 32 && generated.takeLast(32).toSet().size <= 3) {
                 Log.w(TAG, "Low-diversity repetition at ${generated.size}, stopping")
-                return generated.dropLast(15)
+                return generated.dropLast(31)
             }
         }
 

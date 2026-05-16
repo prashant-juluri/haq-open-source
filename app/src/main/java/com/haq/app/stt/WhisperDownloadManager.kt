@@ -39,14 +39,14 @@ object WhisperDownloadManager {
 
     private val FILES = listOf(
         ModelFile(
-            url      = "$BASE_URL/onnx/encoder_model_fp16.onnx",
-            relPath  = "whisper/encoder_model_fp16.onnx",
-            minBytes = 150_000_000L,  // ~177 MB
+            url      = "$BASE_URL/onnx/encoder_model_quantized.onnx",
+            relPath  = "whisper/encoder_model_quantized.onnx",
+            minBytes = 80_000_000L,   // ~92 MB
         ),
         ModelFile(
-            url      = "$BASE_URL/onnx/decoder_model_merged_fp16.onnx",
-            relPath  = "whisper/decoder_model_merged_fp16.onnx",
-            minBytes = 280_000_000L,  // ~309 MB
+            url      = "$BASE_URL/onnx/decoder_model_merged_quantized.onnx",
+            relPath  = "whisper/decoder_model_merged_quantized.onnx",
+            minBytes = 130_000_000L,  // ~157 MB
         ),
         ModelFile(
             url      = "$BASE_URL/tokenizer.json",
