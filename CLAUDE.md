@@ -128,9 +128,29 @@ should require no code changes, only asset additions.
 ## Knowledge base
 Three SQLite databases shipped in assets:
 - schemes.db — 4,545 government welfare schemes from myscheme.gov.in
-- law.db — 780 acts and legal provisions
-- offices.db — 862 government offices with contact details
+- law.db — 780 acts and legal provisions from indiacode.nic.in
+- offices.db — 862 District Legal Services Authority (DLSA) offices from nalsa.gov.in
 All three are preloaded by HaqViewModel on app start.
+
+### How law.db was built (scrape_indiacode.py)
+Source: indiacode.nic.in — Government of India's official Central Acts repository.
+Pipeline: Playwright paginates browse-by-short-title (100 acts/page) → visits each act's
+item page → reads `citation_pdf_url` meta tag → downloads English PDF via aiohttp →
+extracts text with pdfminer.six → splits into sections on Indian Acts heading pattern
+("3. Definitions.—") → builds rag_chunk per section (≤120 words).
+Anti-bot: system Chromium channel (not bundled Playwright binary) + anti-detection JS
+to pass Akamai TLS fingerprint and navigator.webdriver checks.
+rag_chunk format: "Section 3 of The Minimum Wages Act, 1948 — Definitions: …"
+Table: law_sections(id, act_title, act_year, section_num, section_title, rag_chunk, source_url)
+
+### How offices.db was built (scrape_offices.py)
+Source: {state}.nalsa.gov.in — NALSA's network of State Legal Services Authority portals.
+Each portal publishes a DLSA (District Legal Services Authority) table with district names
+and contact numbers. Pipeline: tries candidate URL paths per state (/dlsa/, /contact-us/,
+etc.) → sniffs table headers for district and phone columns → extracts one contact record
+per district → writes rag_chunk explaining what a DLSA does + helpline number.
+rag_chunk format: "DLSA {district}, {state}. Phone: {number}. Provides free legal aid…"
+This lets Gemma tell users exactly who to call for free legal help in their district.
 
 ## Response structure
 Every Gemma response must follow this structure:

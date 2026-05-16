@@ -53,6 +53,10 @@ Three SQLite databases ship inside the APK:
 
 Schemes were scraped using a custom Playwright + aiohttp pipeline that captured the internal myscheme.gov.in API, extracted per-scheme eligibility rules into a normalised `eligibility_rules` table, and pre-computed MiniLM embeddings for every scheme.
 
+**law.db** was built by scraping [indiacode.nic.in](https://indiacode.nic.in) — the Government of India's official Central Acts repository. Playwright paginated the browse-by-short-title listing (100 acts per page), visited each act's item page, read the `citation_pdf_url` meta tag to locate the English PDF, downloaded it via aiohttp, extracted plain text with pdfminer.six, and split it into sections using the standard Indian Acts heading pattern (`"3. Definitions.—"`). Each section became a `rag_chunk` of up to 120 words formatted as `"Section 3 of The Minimum Wages Act, 1948 — Definitions: …"`. indiacode.nic.in runs Akamai bot detection; this required using the system Chromium binary (not the bundled Playwright one) and injecting anti-detection JS to pass the TLS fingerprint and `navigator.webdriver` checks.
+
+**offices.db** was built by scraping every State Legal Services Authority (SLSA) website hosted at `{state}.nalsa.gov.in` — the National Legal Services Authority's network of state portals. Each portal publishes a district-level DLSA (District Legal Services Authority) table with contact numbers. The scraper tried a set of candidate URL paths per state (`/district-legal-services-authority/`, `/dlsa/`, `/contact-us/`, etc.), sniffed the table structure to identify district and phone columns by header keywords, and extracted a contact record per district. Each record becomes a `rag_chunk` that explains what a DLSA does and includes the helpline number — so Gemma can tell a user exactly who to call for free legal aid in their district.
+
 ### Retrieval Pipeline
 
 1. User speaks a query → STT transcribes → MiniLM embeds on-device
