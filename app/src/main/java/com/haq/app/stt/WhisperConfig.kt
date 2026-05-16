@@ -4,10 +4,8 @@ object WhisperConfig {
     const val SAMPLE_RATE       = 16000
     const val CHUNK_DURATION_MS = 10_000
 
-    const val ENCODER_MODEL = "whisper/encoder_model_quantized.onnx"
-    const val DECODER_MODEL = "whisper/decoder_model_merged_quantized.onnx"
-    // Note: HuggingFace onnx-community/whisper-small stores quantized files under onnx/,
-    // not onnx_quantized/. Both _quantized and _int8 suffixes exist; we use _quantized.
+    const val ENCODER_MODEL = "whisper/encoder_model_fp16.onnx"
+    const val DECODER_MODEL = "whisper/decoder_model_merged_fp16.onnx"
     const val TOKENIZER     = "whisper/tokenizer.json"
 
     // Whisper special token IDs (common to all model sizes)

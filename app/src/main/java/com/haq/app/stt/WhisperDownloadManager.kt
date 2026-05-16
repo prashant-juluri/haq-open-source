@@ -10,10 +10,10 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Downloads the Whisper-small int8-quantized ONNX model files from HuggingFace on first
+ * Downloads Whisper-small float16 ONNX model files from HuggingFace on first
  * use of a Whisper-capable language (te/ml/kn/ta/bn/gu/mr/ne).
  *
- * Uses decoder_model_merged_quantized.onnx for all decode steps:
+ * Uses decoder_model_merged_fp16.onnx for all decode steps:
  *   Step 0  — use_cache_branch=false, empty past_key_values (seq=0); reads real encoder KV
  *             (seq=1500) via OnnxTensor.floatBuffer to bypass ORT Java nested-array seq=0 bug.
  *   Steps 1+ — use_cache_branch=true; reuses fixed encoder KV from step 0 and grows decoder KV.
@@ -21,8 +21,10 @@ import java.util.concurrent.TimeUnit
  * Files are written atomically (temp → rename) to [Context.filesDir]/whisper/.
  * Already-complete files are skipped on subsequent calls.
  *
- * Source: onnx-community/whisper-small on HuggingFace (optimum ONNX export, int8 quantized).
- * Encoder ~23 MB, decoder ~88 MB, tokenizer <1 MB — total ~111 MB.
+ * Source: onnx-community/whisper-small on HuggingFace (fp16 export).
+ * Encoder ~177 MB, decoder ~309 MB, tokenizer <1 MB — total ~486 MB.
+ * Float16 weights are more accurate than int8-quantized at 2× the download size.
+ * ORT upcasts to float32 on devices without native fp16 ALU (all Snapdragon 6/7 have it).
  */
 object WhisperDownloadManager {
 
@@ -37,14 +39,14 @@ object WhisperDownloadManager {
 
     private val FILES = listOf(
         ModelFile(
-            url      = "$BASE_URL/onnx/encoder_model_quantized.onnx",
-            relPath  = "whisper/encoder_model_quantized.onnx",
-            minBytes = 15_000_000L,   // ~23 MB
+            url      = "$BASE_URL/onnx/encoder_model_fp16.onnx",
+            relPath  = "whisper/encoder_model_fp16.onnx",
+            minBytes = 150_000_000L,  // ~177 MB
         ),
         ModelFile(
-            url      = "$BASE_URL/onnx/decoder_model_merged_quantized.onnx",
-            relPath  = "whisper/decoder_model_merged_quantized.onnx",
-            minBytes = 60_000_000L,   // ~88 MB
+            url      = "$BASE_URL/onnx/decoder_model_merged_fp16.onnx",
+            relPath  = "whisper/decoder_model_merged_fp16.onnx",
+            minBytes = 280_000_000L,  // ~309 MB
         ),
         ModelFile(
             url      = "$BASE_URL/tokenizer.json",
