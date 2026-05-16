@@ -36,9 +36,6 @@ Tagline: Your rights. Your language. No middleman.
 - Vector search: sqlite-vec
 - Embeddings: paraphrase-multilingual-MiniLM-L12-v2
   (pre-computed on laptop, shipped inside APK as asset)
-- OCR: ML Kit on-device
-- Identity: Android BiometricPrompt (face ID) + 
-  voice-spoken 4-digit PIN fallback
 
 ## Target devices
 Mid-range Android — Snapdragon 6/7 series, Android 10+

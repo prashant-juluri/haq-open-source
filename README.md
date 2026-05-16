@@ -41,8 +41,6 @@ Every step runs on-device. No cloud. No account. No internet after first setup.
 | Knowledge base | SQLite — 4,545 schemes, 780 laws, 862 offices |
 | Vector search | sqlite-vec (cosine similarity, on-device) |
 | Embeddings | paraphrase-multilingual-MiniLM-L12-v2 (pre-computed, shipped in APK) |
-| OCR | ML Kit on-device |
-| Identity | Android BiometricPrompt + voice PIN fallback |
 | Target device | Snapdragon 6/7 series, Android 10+, 4 GB RAM |
 
 ### Knowledge Base
@@ -165,7 +163,7 @@ We'd rather be honest about these than have a judge discover them.
 
 ## Privacy
 
-No data leaves the device. Ever. There is no backend, no analytics, no crash reporting, no account system. The user's profile, queries, and entitlement data are stored locally in Room/SQLite and protected by Android BiometricPrompt. The only network calls are one-time model downloads (Gemma: ~2.4 GB, Whisper: ~250 MB) over WiFi.
+No data leaves the device. Ever. There is no backend, no analytics, no crash reporting, no account system. The user's profile, queries, and entitlement data are stored locally in Room/SQLite. The only network calls are one-time model downloads (Gemma: ~2.4 GB, Whisper: ~250 MB) over WiFi.
 
 ---
 
@@ -178,14 +176,10 @@ No data leaves the device. Ever. There is no backend, no analytics, no crash rep
 
 ### First launch
 1. Clone the repo and open in Android Studio
-2. Build and install the `feat/whisper-dravidian` branch
+2. Build and install from `main`
 3. On first launch, the app prompts for WiFi to download Gemma 4 E2B (~2.4 GB)
 4. Select English or Hindi — these work offline immediately via AiAi
 5. To use Telugu/Malayalam/Kannada/Tamil/Bengali/Gujarati/Marathi/Nepali — select the language; the app prompts for WiFi to download Whisper-small (~250 MB) once, then works permanently offline
-
-### Branch structure
-- `main` — English + Hindi only (AiAi STT)
-- `feat/whisper-dravidian` — adds 8 Indian languages via Whisper-small ONNX (hackathon build)
 
 ---
 
