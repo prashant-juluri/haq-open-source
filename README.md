@@ -1,6 +1,6 @@
 # Haq — Your Rights. Your Language. No Middleman.
 
-### An offline-first, voice-native welfare entitlement navigator for marginalised Indian citizens, powered by Gemma 4 on-device.
+### An offline-first, voice-first welfare entitlement navigator for marginalised Indian citizens, powered by Gemma 4 on-device.
 
 ---
 
