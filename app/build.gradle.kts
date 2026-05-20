@@ -18,7 +18,7 @@ android {
         // Bump whenever law.db is regenerated — LawRepository re-copies on mismatch.
         buildConfigField("int", "LAW_DB_VERSION", "1")
         // Bump whenever offices.db is regenerated — OfficeRepository re-copies on mismatch.
-        buildConfigField("int", "OFFICES_DB_VERSION", "3")
+        buildConfigField("int", "OFFICES_DB_VERSION", "4")
     }
 
     buildTypes {

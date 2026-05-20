@@ -693,7 +693,6 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Returns office types to query from offices.db based on the query content.
      * Multiple types may be returned; OfficeRepository searches with OR across all.
-     * Types: DLSA, LABOUR, AGRI, DCDRC, SW, COLLECTOR, PMKISAN, INSOMBU, NCSC.
      * Returns empty list only when the query has no recognisable scheme/rights topic.
      */
     private fun officeTypesForQuery(query: String): List<String> {
@@ -703,18 +702,28 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         // DLSA — free legal aid, always relevant for legal/rights queries
         if (hasLegalKeywords(query)) types.add("DLSA")
 
-        // LABOUR — employment, wages, MNREGA, bonded labour
+        // LABOUR — employment, wages, bonded labour
         val labourKw = setOf(
             "wage", "wages", "salary", "employer", "employee", "labour", "labor",
-            "worker", "dismiss", "fired", "overtime", "maternity", "esi", "provident",
-            "mnrega", "mgnrega", "job card", "nrega",
-            "वेतन", "मजदूरी", "श्रमिक", "मनरेगा", "नरेगा",
-            "వేతనం", "కూలి", "కార్మికుడు", "మనరేగా",
-            "വേതനം", "കൂലി", "തൊഴിലാളി", "മനരേഗ",
-            "ವೇತನ", "ಕೂಲಿ", "ಕಾರ್ಮಿಕ", "ಮನರೇಗ",
-            "ஊதியம்", "கூலி", "தொழிலாளர்", "மனரேகா",
+            "worker", "dismiss", "fired", "overtime", "esi", "provident",
+            "वेतन", "मजदूरी", "श्रमिक",
+            "వేతనం", "కూలి", "కార్మికుడు",
+            "വേതനം", "കൂലി", "തൊഴിലാളി",
+            "ವೇತನ", "ಕೂಲಿ", "ಕಾರ್ಮಿಕ",
+            "ஊதியம்", "கூலி", "தொழிலாளர்",
         )
         if (labourKw.any { lower.contains(it) }) types.add("LABOUR")
+
+        // MGNREGA — job card, NREGA work demand, wage payment delays
+        val nregaKw = setOf(
+            "mnrega", "mgnrega", "nrega", "job card", "100 days", "hundred days",
+            "मनरेगा", "नरेगा", "जॉब कार्ड",
+            "మనరేగా", "నరేగా", "జాబ్ కార్డ్",
+            "മനരേഗ", "നരേഗ", "ജോബ് കാർഡ്",
+            "ಮನರೇಗ", "ನರೇಗ", "ಜಾಬ್ ಕಾರ್ಡ್",
+            "மனரேகா", "நரேகா", "வேலை அட்டை",
+        )
+        if (nregaKw.any { lower.contains(it) }) types.add("MGNREGA")
 
         // AGRI — crop insurance, PM-KISAN, Kisan Credit Card, agriculture
         val agriKw = setOf(
@@ -741,9 +750,21 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (consumerKw.any { lower.contains(it) }) types.add("DCDRC")
 
-        // SW — SC/ST welfare, pensions, scholarships
+        // FCS — ration card issues, PDS dealer complaints (district supply officer)
+        val fcsKw = setOf(
+            "ration card", "ration shop", "fair price shop", "pds", "food security",
+            "nfsa", "subsidised grain", "wheat rice quota",
+            "राशन कार्ड", "उचित मूल्य", "खाद्य सुरक्षा",
+            "రేషన్ కార్డ్", "న్యాయమైన ధర దుకాణం",
+            "റേഷൻ കാർഡ്", "ന്യായവില",
+            "ರೇಷನ್ ಕಾರ್ಡ್", "ನ್ಯಾಯಬೆಲೆ ಅಂಗಡಿ",
+            "ரேஷன் அட்டை", "நியாய விலை கடை",
+        )
+        if (fcsKw.any { lower.contains(it) }) types.add("FCS")
+
+        // SW — SC/ST welfare, pensions, scholarships, disability
         val swKw = setOf(
-            "pension", "scholarship", "dalit", "tribal", "social welfare",
+            "pension", "scholarship", "dalit", "social welfare",
             "widow", "disability", "handicap", "backward class",
             "ignoaps", "igndps", "ignwps", "nfbs", "nsap",
             "पेंशन", "छात्रवृत्ति", "विकलांग", "विधवा",
@@ -753,6 +774,78 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ஓய்வூதியம்", "உதவித்தொகை", "மாற்றுத்திறனாளி",
         )
         if (swKw.any { lower.contains(it) }) types.add("SW")
+
+        // TRIBAL — forest rights, tribal land, ST welfare, PVTG
+        val tribalKw = setOf(
+            "tribal", "forest rights", "fra", "forest land", "patta", "van adhikar",
+            "pvtg", "adivasi", "scheduled tribe",
+            "आदिवासी", "वन अधिकार", "वन भूमि", "पट्टा",
+            "ఆదివాసి", "అడవి హక్కులు", "అటవీ భూమి",
+            "ആദിവാസി", "വനാവകാശം", "വനഭൂമി",
+            "ಆದಿವಾಸಿ", "ಅರಣ್ಯ ಹಕ್ಕು",
+            "ஆதிவாசி", "வனஉரிமை",
+        )
+        if (tribalKw.any { lower.contains(it) }) types.add("TRIBAL")
+
+        // CMO — health, hospital, treatment, medicines, NHM
+        val cmoKw = setOf(
+            "hospital", "health", "doctor", "medicine", "treatment", "ambulance",
+            "nhm", "ayushman", "pmjay", "health card", "free treatment",
+            "अस्पताल", "स्वास्थ्य", "दवाई", "इलाज",
+            "ఆసుపత్రి", "ఆరోగ్యం", "మందులు", "చికిత్స",
+            "ആശുപത്രി", "ആരോഗ്യം", "മരുന്ന്", "ചികിത്സ",
+            "ಆಸ್ಪತ್ರೆ", "ಆರೋಗ್ಯ", "ಔಷಧ", "ಚಿಕಿತ್ಸೆ",
+            "மருத்துவமனை", "சுகாதாரம்", "மருந்து", "சிகிச்சை",
+        )
+        if (cmoKw.any { lower.contains(it) }) types.add("CMO")
+
+        // PMJAY — Ayushman Bharat health card, cashless treatment
+        val pmjayKw = setOf(
+            "ayushman", "pmjay", "jan arogya", "health card", "golden card",
+            "5 lakh", "cashless", "empanelled hospital",
+            "आयुष्मान", "जन आरोग्य", "हेल्थ कार्ड",
+            "ఆయుష్మాన్", "జన్ ఆరోగ్య",
+            "ആയുഷ്മാൻ", "ജൻ ആരോഗ്യ",
+            "ಆಯುಷ್ಮಾನ್", "ಜನ ಆರೋಗ್ಯ",
+            "ஆயுஷ்மான்", "ஜன் ஆரோக்கியா",
+        )
+        if (pmjayKw.any { lower.contains(it) }) types.add("PMJAY")
+
+        // WCD — anganwadi, maternity benefit, child nutrition, PMMVY, ICDS
+        val wcdKw = setOf(
+            "anganwadi", "icds", "pmmvy", "maternity benefit", "child nutrition",
+            "beti bachao", "beti padhao", "domestic violence", "women protection",
+            "आंगनवाड़ी", "मातृत्व", "बेटी बचाओ",
+            "అంగన్‌వాడి", "మాతృత్వం", "బేటి బచావో",
+            "അങ്കൺവാടി", "മാതൃത്വ ആനുകൂല്യം",
+            "ಅಂಗನವಾಡಿ", "ಮಾತೃತ್ವ ಸೌಲಭ್ಯ",
+            "அங்கன்வாடி", "மகப்பேறு நலன்",
+        )
+        if (wcdKw.any { lower.contains(it) }) types.add("WCD")
+
+        // DEO — school, education, RTE admission, scholarship, mid-day meal
+        val deoKw = setOf(
+            "school", "education", "rte", "mid-day meal", "midday meal",
+            "admission denied", "out of school", "dropout", "free education",
+            "स्कूल", "शिक्षा", "आरटीई", "मध्याह्न भोजन",
+            "స్కూల్", "విద్య", "ఆర్‌టీఈ", "మధ్యాహ్న భోజనం",
+            "സ്കൂൾ", "വിദ്യാഭ്യാസം", "ആർടിഇ", "ഉച്ചഭക്ഷണം",
+            "ಶಾಲೆ", "ಶಿಕ್ಷಣ", "ಆರ್‌ಟಿಇ", "ಮಧ್ಯಾಹ್ನ ಊಟ",
+            "பள்ளி", "கல்வி", "ஆர்டிஈ", "மதிய உணவு",
+        )
+        if (deoKw.any { lower.contains(it) }) types.add("DEO")
+
+        // SP — police, FIR, safety, missing person, trafficking
+        val spKw = setOf(
+            "police", "fir", "complaint police", "missing", "kidnap", "trafficking",
+            "harassment", "threat", "assault", "domestic violence police",
+            "पुलिस", "एफआईआर", "लापता", "उत्पीड़न",
+            "పోలీసు", "ఎఫ్‌ఐఆర్", "గల్లంతు",
+            "പോലീസ്", "എഫ്ഐആർ", "കാണാതായ",
+            "ಪೊಲೀಸ್", "ಎಫ್‌ಐಆರ್", "ನಾಪತ್ತೆ",
+            "போலீஸ்", "எஃப்ஐஆர்", "காணாமல்",
+        )
+        if (spKw.any { lower.contains(it) }) types.add("SP")
 
         // COLLECTOR — grievances, certificates, land records
         val collectorKw = setOf(
@@ -783,6 +876,64 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (ombuKw.any { lower.contains(it) }) types.add("INSOMBU")
 
+        // EPFO — PF, provident fund, pension, EDLI
+        val epfoKw = setOf(
+            "provident fund", "pf ", " epf", "epfo", "uan", "pf withdrawal",
+            "pf transfer", "eps pension", "edli",
+            "भविष्य निधि", "पीएफ", "ईपीएफओ",
+            "ప్రావిడెంట్ ఫండ్", "పీఎఫ్",
+            "പ്രൊവിഡന്റ് ഫണ്ട്", "പിഎഫ്",
+            "ಭವಿಷ್ಯ ನಿಧಿ", "ಪಿಎಫ್",
+            "வருங்கால வைப்பு நிதி", "பிஎஃப்",
+        )
+        if (epfoKw.any { lower.contains(it) }) types.add("EPFO")
+
+        // UIDAI — Aadhaar enrolment, update, correction
+        val uidaiKw = setOf(
+            "aadhaar", "aadhar", "uid", "biometric", "aadhaar update", "aadhaar correction",
+            "आधार", "यूआईडी",
+            "ఆధార్", "యూఐడీ",
+            "ആധാർ", "യുഐഡി",
+            "ಆಧಾರ್", "ಯುಐಡಿ",
+            "ஆதார்", "யுஐடி",
+        )
+        if (uidaiKw.any { lower.contains(it) }) types.add("UIDAI")
+
+        // PASSPORT — passport, tatkal, travel document
+        val passportKw = setOf(
+            "passport", "tatkal", "travel document", "psk", "passport seva",
+            "पासपोर्त", "पासपोर्ट",
+            "పాస్‌పోర్ట్",
+            "പാസ്‌പോർട്ട്",
+            "ಪಾಸ್‌ಪೋರ್ಟ್",
+            "பாஸ்போர்ட்",
+        )
+        if (passportKw.any { lower.contains(it) }) types.add("PASSPORT")
+
+        // NABARD — agricultural credit, SHG, microfinance, rural loan
+        val nabardKw = setOf(
+            "nabard", "shg", "self help group", "microfinance", "rural credit",
+            "kisan credit card", "ridf",
+            "नाबार्ड", "स्वयं सहायता समूह",
+            "నాబార్డ్", "స్వయం సహాయక సంఘం",
+            "നബാർഡ്", "സ്വയം സഹായ സംഘം",
+            "ನಬಾರ್ಡ್", "ಸ್ವಸಹಾಯ ಸಂಘ",
+            "நபார்டு", "சுய உதவிக் குழு",
+        )
+        if (nabardKw.any { lower.contains(it) }) types.add("NABARD")
+
+        // SIC/CIC — RTI, right to information, information commission
+        val rtiKw = setOf(
+            "rti", "right to information", "information commission", "pio",
+            "public information officer", "second appeal",
+            "आरटीआई", "सूचना का अधिकार", "सूचना आयोग",
+            "ఆర్‌టీఐ", "సమాచార హక్కు",
+            "ആർടിഐ", "വിവരാവകാശം",
+            "ಆರ್‌ಟಿಐ", "ಮಾಹಿತಿ ಹಕ್ಕು",
+            "ஆர்டிஐ", "தகவல் உரிமை",
+        )
+        if (rtiKw.any { lower.contains(it) }) types.add("SIC")
+
         // NCSC — SC/ST commission for atrocity/discrimination
         val ncscKw = setOf(
             "atrocity", "discrimination", "ncsc", "sc/st commission", "untouchability",
@@ -791,10 +942,52 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (ncscKw.any { lower.contains(it) }) types.add("NCSC")
 
-        // Location follow-up — "where is the office", "what is the address",
-        // "how do I get there", "where can I go" etc.
-        // When the user asks a navigation/location question we inject all common
-        // office types so Gemma can surface whichever is relevant from context.
+        // NCBC — OBC reservation, backward class discrimination
+        val ncbcKw = setOf(
+            "ncbc", "obc", "other backward class", "backward class reservation",
+            "obc certificate", "obc list",
+            "ओबीसी", "अन्य पिछड़ा",
+            "ఓబీసీ", "వెనుకబడిన తరగతి",
+            "ഒബിസി", "പിന്നോക്ക വർഗം",
+            "ಒಬಿಸಿ", "ಹಿಂದುಳಿದ ವರ್ಗ",
+            "ஓபிசி", "பிற்படுத்தப்பட்ட",
+        )
+        if (ncbcKw.any { lower.contains(it) }) types.add("NCBC")
+
+        // NCST — ST rights, tribal commission
+        val ncstKw = setOf(
+            "ncst", "scheduled tribe commission", "st rights", "tribal atrocity",
+            "अनुसूचित जनजाति आयोग",
+            "షెడ్యూల్డ్ తెగల కమిషన్",
+        )
+        if (ncstKw.any { lower.contains(it) }) types.add("NCST")
+
+        // NCW — women rights, sexual harassment, gender violence
+        val ncwKw = setOf(
+            "ncw", "women commission", "sexual harassment", "gender violence",
+            "women rights", "mahila aayog",
+            "महिला आयोग", "यौन उत्पीड़न",
+            "మహిళా కమిషన్", "లైంగిక వేధింపు",
+            "വനിതാ കമ്മിഷൻ", "ലൈംഗിക പീഡനം",
+            "ಮಹಿಳಾ ಆಯೋಗ", "ಲೈಂಗಿಕ ಕಿರುಕುಳ",
+            "பெண்கள் ஆணையம்", "பாலியல் துன்புறுத்தல்",
+        )
+        if (ncwKw.any { lower.contains(it) }) types.add("NCW")
+
+        // NHRC — human rights violations, custodial death, police brutality
+        val nhrcKw = setOf(
+            "nhrc", "human rights", "custodial death", "police brutality",
+            "rights violation", "manav adhikar",
+            "मानव अधिकार", "हिरासत में मौत",
+            "మానవ హక్కులు", "కస్టడీ మరణం",
+            "മനുഷ്യാവകാശം", "കസ്റ്റഡി മരണം",
+            "ಮಾನವ ಹಕ್ಕು", "ಕಸ್ಟಡಿ ಸಾವು",
+            "மனித உரிமை", "காவல் நிலையத்தில் மரணம்",
+        )
+        if (nhrcKw.any { lower.contains(it) }) types.add("NHRC")
+
+        // Location follow-up — surface all common office types so Gemma can
+        // pick whichever is relevant from context.
         val locationKw = setOf(
             "where", "address", "location", "directions", "how to reach", "how to go",
             "how do i get", "find the office", "office address", "office location",
@@ -804,14 +997,18 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ಎಲ್ಲಿ", "ವಿಳಾಸ", "ಕಚೇರಿ",                  // Kannada
             "எங்கே", "முகவரி", "அலுவலகம்",               // Tamil
             "কোথায়", "ঠিকানা", "অফিস",                   // Bengali
-            "ક્યાં", "સરનામું", "કચેરી",                  // Gujarati
+            "ক্যাঁ", "સरनामु", "કচेरी",                  // Gujarati
             "कुठे", "पत्ता", "कार्यालय",                   // Marathi
             "କେଉଁଠି", "ଠିକଣା", "କାର୍ଯ୍ୟାଳୟ",             // Odia
             "ক'ত", "ঠিকনা", "কাৰ্যালয়",                  // Assamese
             "कहाँ", "ठेगाना", "कार्यालय",                  // Nepali
         )
         if (locationKw.any { lower.contains(it) }) {
-            for (t in listOf("AGRI", "COLLECTOR", "DLSA", "LABOUR", "SW", "PMKISAN")) {
+            for (t in listOf(
+                "AGRI", "CMO", "COLLECTOR", "DEO", "DLSA", "EPFO",
+                "FCS", "LABOUR", "MGNREGA", "NABARD", "PASSPORT",
+                "PMJAY", "PMKISAN", "SP", "SW", "TRIBAL", "UIDAI",
+            )) {
                 if (!types.contains(t)) types.add(t)
             }
         }
