@@ -711,6 +711,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "വേതനം", "കൂലി", "തൊഴിലാളി",
             "ವೇತನ", "ಕೂಲಿ", "ಕಾರ್ಮಿಕ",
             "ஊதியம்", "கூலி", "தொழிலாளர்",
+            "বেতন", "মজুরি", "শ্রমিক",              // Bengali
+            "વેતન", "મજૂરી", "કામદાર",              // Gujarati
+            "वेतन", "मजुरी", "कामगार",              // Marathi
+            "ବେତନ", "ମଜୁରି", "ଶ୍ରମିକ",             // Odia
+            "দৰমহা", "মজুৰি", "শ্ৰমিক",             // Assamese
+            "तलब", "ज्याला", "श्रमिक",              // Nepali
         )
         if (labourKw.any { lower.contains(it) }) types.add("LABOUR")
 
@@ -722,6 +728,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "മനരേഗ", "നരേഗ", "ജോബ് കാർഡ്",
             "ಮನರೇಗ", "ನರೇಗ", "ಜಾಬ್ ಕಾರ್ಡ್",
             "மனரேகா", "நரேகா", "வேலை அட்டை",
+            "মনরেগা", "নরেগা", "জব কার্ড",          // Bengali
+            "મનરેગા", "નરેગા", "જોબ કાર્ડ",         // Gujarati
+            "मनरेगा", "नरेगा", "जॉब कार्ड",         // Marathi
+            "ମନରେଗା", "ନରେଗା", "ଜବ କାର୍ଡ",        // Odia
+            "মনৰেগা", "নৰেগা", "জব কাৰ্ড",          // Assamese
+            "मनरेगा", "नरेगा", "जब कार्ड",          // Nepali
         )
         if (nregaKw.any { lower.contains(it) }) types.add("MGNREGA")
 
@@ -734,6 +746,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "കർഷകൻ", "വിള", "കൃഷി", "വിള ഇൻഷുറൻസ്",
             "ರೈತ", "ಬೆಳೆ", "ಕೃಷಿ", "ಬೆಳೆ ವಿಮೆ",
             "விவசாயி", "பயிர்", "விவசாயம்", "பயிர் காப்பீடு",
+            "কৃষক", "ফসল", "কৃষি", "ফসল বীমা",     // Bengali
+            "ખેડૂત", "પાક", "ખેતી", "પાક વીમો",    // Gujarati
+            "शेतकरी", "पीक", "शेती", "पीक विमा",   // Marathi
+            "ଚାଷୀ", "ଫସଲ", "କୃଷି", "ଫସଲ ବୀମା",   // Odia
+            "কৃষক", "শস্য", "কৃষি", "শস্য বীমা",   // Assamese
+            "किसान", "बाली", "कृषि", "बाली बीमा",  // Nepali
         )
         if (agriKw.any { lower.contains(it) }) types.add("AGRI")
 
@@ -747,6 +765,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ഉപഭോക്താ", "പരാതി", "റേഷൻ", "ഇൻഷുറൻസ് ക്ലെയിം",
             "ಗ್ರಾಹಕ", "ದೂರು", "ರೇಷನ್", "ವಿಮಾ ಹಕ್ಕು",
             "நுகர்வோர்", "புகார்", "ரேஷன்", "காப்பீட்டு கோரிக்கை",
+            "ভোক্তা", "অভিযোগ", "রেশন", "বীমা দাবি",    // Bengali
+            "ગ્રાહક", "ફરિયાદ", "રેશন", "વીમા દાવો",    // Gujarati
+            "ग्राहक", "तक्रार", "रेशन", "विमा दावा",    // Marathi
+            "ଉପଭୋକ୍ତା", "ଅଭିଯୋଗ", "ରେସନ",            // Odia
+            "ভোক্তা", "অভিযোগ", "ৰেচন",               // Assamese
+            "उपभोक्ता", "गुनासो", "राशन",              // Nepali
         )
         if (consumerKw.any { lower.contains(it) }) types.add("DCDRC")
 
@@ -759,6 +783,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "റേഷൻ കാർഡ്", "ന്യായവില",
             "ರೇಷನ್ ಕಾರ್ಡ್", "ನ್ಯಾಯಬೆಲೆ ಅಂಗಡಿ",
             "ரேஷன் அட்டை", "நியாய விலை கடை",
+            "রেশন কার্ড", "ন্যায্য মূল্যের দোকান", "খাদ্য নিরাপত্তা",  // Bengali
+            "રેશન કાર્ડ", "સસ્તા અનાજ", "ખાદ્ય સુરક્ષા",              // Gujarati
+            "रेशन कार्ड", "स्वस्त धान्य", "अन्न सुरक्षा",               // Marathi
+            "ରେସନ କାର୍ଡ", "ଖାଦ୍ୟ ସୁରକ୍ଷା",                           // Odia
+            "ৰেচন কাৰ্ড", "খাদ্য সুৰক্ষা",                             // Assamese
+            "राशन कार्ड", "खाद्य सुरक्षा",                              // Nepali
         )
         if (fcsKw.any { lower.contains(it) }) types.add("FCS")
 
@@ -772,6 +802,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "പെൻഷൻ", "സ്കോളർഷിപ്പ്", "ഭിന്നശേഷി", "വിധവ",
             "ಪಿಂಚಣಿ", "ವಿಕಲಚೇತನ", "ವಿಧವೆ",
             "ஓய்வூதியம்", "உதவித்தொகை", "மாற்றுத்திறனாளி",
+            "পেনশন", "বৃত্তি", "প্রতিবন্ধী", "বিধবা",     // Bengali
+            "પેન્શન", "શિષ્યવૃત્તિ", "વિકલાંગ", "વિધવા",  // Gujarati
+            "पेन्शन", "शिष्यवृत्ती", "अपंग", "विधवा",      // Marathi
+            "ପେନ୍‌ସନ", "ଛାତ୍ରବୃତ୍ତି", "ବିକଳାଙ୍ଗ", "ବିଧବା", // Odia
+            "পেঞ্চন", "বৃত্তি", "বিকলাঙ্গ", "বিধৱা",      // Assamese
+            "पेन्सन", "छात्रवृत्ति", "अपाङ्ग", "विधवा",   // Nepali
         )
         if (swKw.any { lower.contains(it) }) types.add("SW")
 
@@ -784,6 +820,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ആദിവാസി", "വനാവകാശം", "വനഭൂമി",
             "ಆದಿವಾಸಿ", "ಅರಣ್ಯ ಹಕ್ಕು",
             "ஆதிவாசி", "வனஉரிமை",
+            "আদিবাসী", "বনাধিকার", "বন জমি",          // Bengali
+            "આદિવાસી", "વન અધિકાર", "વન જમીન",       // Gujarati
+            "आदिवासी", "वन हक्क", "वन जमीन",          // Marathi
+            "ଆଦିବାସୀ", "ବନ ଅଧିକାର", "ବନ ଜମି",       // Odia
+            "আদিবাসী", "বন অধিকাৰ", "বন ভূমি",       // Assamese
+            "आदिवासी", "वन अधिकार", "वन जमिन",        // Nepali
         )
         if (tribalKw.any { lower.contains(it) }) types.add("TRIBAL")
 
@@ -796,6 +838,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ആശുപത്രി", "ആരോഗ്യം", "മരുന്ന്", "ചികിത്സ",
             "ಆಸ್ಪತ್ರೆ", "ಆರೋಗ್ಯ", "ಔಷಧ", "ಚಿಕಿತ್ಸೆ",
             "மருத்துவமனை", "சுகாதாரம்", "மருந்து", "சிகிச்சை",
+            "হাসপাতাল", "স্বাস্থ্য", "ওষুধ", "চিকিৎসা",   // Bengali
+            "હૉસ્પિટલ", "સ્વાસ્થ્ય", "દવા", "ઇલાજ",       // Gujarati
+            "रुग्णालय", "आरोग्य", "औषध", "उपचार",           // Marathi
+            "ଡାକ୍ତରଖାନା", "ସ୍ୱାସ୍ଥ୍ୟ", "ଔଷଧ", "ଚିକିତ୍ସା", // Odia
+            "চিকিৎসালয়", "স্বাস্থ্য", "দৰব", "চিকিৎসা",   // Assamese
+            "अस्पताल", "स्वास्थ्य", "औषधि", "उपचार",        // Nepali
         )
         if (cmoKw.any { lower.contains(it) }) types.add("CMO")
 
@@ -808,6 +856,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ആയുഷ്മാൻ", "ജൻ ആരോഗ്യ",
             "ಆಯುಷ್ಮಾನ್", "ಜನ ಆರೋಗ್ಯ",
             "ஆயுஷ்மான்", "ஜன் ஆரோக்கியா",
+            "আয়ুষ্মান", "জন আরোগ্য", "স্বাস্থ্য কার্ড",  // Bengali
+            "આયુષ્માન", "જન આરોગ્ય", "હેલ્થ કાર્ડ",       // Gujarati
+            "आयुष्मान", "जन आरोग्य", "आरोग्य कार्ड",       // Marathi
+            "ଆୟୁଷ୍ମାନ", "ଜନ ଆରୋଗ୍ୟ",                      // Odia
+            "আয়ুষ্মান", "জন আৰোগ্য",                       // Assamese
+            "आयुष्मान", "जन आरोग्य",                         // Nepali
         )
         if (pmjayKw.any { lower.contains(it) }) types.add("PMJAY")
 
@@ -820,6 +874,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "അങ്കൺവാടി", "മാതൃത്വ ആനുകൂല്യം",
             "ಅಂಗನವಾಡಿ", "ಮಾತೃತ್ವ ಸೌಲಭ್ಯ",
             "அங்கன்வாடி", "மகப்பேறு நலன்",
+            "অঙ্গনওয়াড়ি", "মাতৃত্ব সুবিধা", "শিশু পুষ্টি",  // Bengali
+            "આંગણવાડી", "માતૃત્વ લાભ", "બેટી બચાઓ",           // Gujarati
+            "अंगणवाडी", "मातृत्व लाभ", "बेटी बचाओ",            // Marathi
+            "ଅଙ୍ଗନୱାଡ଼ି", "ମାତୃତ୍ୱ ଲାଭ",                     // Odia
+            "অংগনৱাড়ি", "মাতৃত্ব সুবিধা",                      // Assamese
+            "आँगनवाडी", "मातृत्व लाभ",                          // Nepali
         )
         if (wcdKw.any { lower.contains(it) }) types.add("WCD")
 
@@ -832,6 +892,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "സ്കൂൾ", "വിദ്യാഭ്യാസം", "ആർടിഇ", "ഉച്ചഭക്ഷണം",
             "ಶಾಲೆ", "ಶಿಕ್ಷಣ", "ಆರ್‌ಟಿಇ", "ಮಧ್ಯಾಹ್ನ ಊಟ",
             "பள்ளி", "கல்வி", "ஆர்டிஈ", "மதிய உணவு",
+            "স্কুল", "শিক্ষা", "মিড-ডে মিল",       // Bengali
+            "શાળા", "શિક્ષણ", "મધ્યાહ્ન ભોજન",    // Gujarati
+            "शाळा", "शिक्षण", "मध्यान्ह भोजन",     // Marathi
+            "ବିଦ୍ୟାଳୟ", "ଶିକ୍ଷା", "ମଧ୍ୟାହ୍ନ ଭୋଜନ", // Odia
+            "বিদ্যালয়", "শিক্ষা", "মধ্যাহ্ন আহাৰ", // Assamese
+            "विद्यालय", "शिक्षा", "मध्यान्ह भोजन",  // Nepali
         )
         if (deoKw.any { lower.contains(it) }) types.add("DEO")
 
@@ -844,6 +910,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "പോലീസ്", "എഫ്ഐആർ", "കാണാതായ",
             "ಪೊಲೀಸ್", "ಎಫ್‌ಐಆರ್", "ನಾಪತ್ತೆ",
             "போலீஸ்", "எஃப்ஐஆர்", "காணாமல்",
+            "পুলিশ", "এফআইআর", "নিখোঁজ", "হয়রানি",   // Bengali
+            "પોલીસ", "એફઆઇઆર", "ગુમ", "ઉત્પીડન",     // Gujarati
+            "पोलीस", "एफआयआर", "बेपत्ता", "त्रास",    // Marathi
+            "ପୋଲିସ", "ଏଫଆଇଆର", "ନିଖୋଜ",             // Odia
+            "আৰক্ষী", "এফআইআৰ", "নিখোঁজ",            // Assamese
+            "प्रहरी", "एफआईआर", "हराएको",             // Nepali
         )
         if (spKw.any { lower.contains(it) }) types.add("SP")
 
@@ -856,6 +928,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ജാതി സർട്ടിഫിക്കറ്റ്",
             "ಜಾತಿ ಪ್ರಮಾಣಪತ್ರ",
             "சாதி சான்றிதழ்",
+            "জাতি সনদ", "আয় সনদ", "জমি",              // Bengali
+            "જ્ઞાતિ પ્રમાણ", "આવક પ્રમાણ", "જમીન",    // Gujarati
+            "जाती प्रमाणपत्र", "उत्पन्न प्रमाणपत्र", "जमीन", // Marathi
+            "ଜାତି ପ୍ରମାଣ", "ଜମି",                      // Odia
+            "জাতি প্ৰমাণপত্ৰ", "জমি",                   // Assamese
+            "जाति प्रमाणपत्र", "जग्गा",                 // Nepali
         )
         if (collectorKw.any { lower.contains(it) }) types.add("COLLECTOR")
 
@@ -865,6 +943,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "kisan payment", "kisan samman",
             "पीएम किसान", "किसान सम्मान", "किसान क़िस्त",
             "పీఎం కిసాన్", "కిసాన్ సమ్మాన్",
+            "കർഷക സമ്മാൻ", "പിഎം കിസാൻ",             // Malayalam
+            "ಪಿಎಂ ಕಿಸಾನ್", "ಕಿಸಾನ್ ಸಮ್ಮಾನ",         // Kannada
+            "பிஎம் கிசான்", "கிசான் சம்மான்",         // Tamil
+            "পিএম কিসান", "কিসান সম্মান",             // Bengali
+            "પીએમ કિસાન", "કિસાન સન્માન",            // Gujarati
+            "पीएम किसान", "किसान सन्मान",             // Marathi
+            "ପିଏମ କିସାନ", "କିସାନ ସମ୍ମାନ",           // Odia
+            "পিএম কিষাণ", "কিষাণ সম্মান",            // Assamese
+            "पीएम किसान", "किसान सम्मान",             // Nepali
         )
         if (pmkisanKw.any { lower.contains(it) }) types.add("PMKISAN")
 
@@ -873,6 +960,15 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "insurance ombudsman", "irdai", "claim settlement", "insurance dispute",
             "rejected claim",
             "बीमा लोकपाल", "బీమా లోక్‌పాల్",
+            "ഇൻഷുറൻസ് ഓംബുഡ്സ്മാൻ", "ഇർഡായ്",     // Malayalam
+            "ವಿಮಾ ಲೋಕಪಾಲ", "ಐಆರ್‌ಡಿಎಐ",           // Kannada
+            "காப்பீட்டு லோக்பால்",                   // Tamil
+            "বীমা লোকপাল",                           // Bengali
+            "વીમા લોકપાલ",                           // Gujarati
+            "विमा लोकपाल",                           // Marathi
+            "ବୀମା ଲୋକପାଳ",                          // Odia
+            "বীমা লোকপাল",                           // Assamese
+            "बीमा लोकपाल",                           // Nepali
         )
         if (ombuKw.any { lower.contains(it) }) types.add("INSOMBU")
 
@@ -885,6 +981,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "പ്രൊവിഡന്റ് ഫണ്ട്", "പിഎഫ്",
             "ಭವಿಷ್ಯ ನಿಧಿ", "ಪಿಎಫ್",
             "வருங்கால வைப்பு நிதி", "பிஎஃப்",
+            "ভবিষ্যৎ তহবিল", "পিএফ",               // Bengali
+            "ભવિષ્ય નિધિ", "પીએફ",                 // Gujarati
+            "भविष्य निर्वाह निधी", "पीएफ",          // Marathi
+            "ଭବିଷ୍ୟ ନିଧି", "ପିଏଫ",                // Odia
+            "ভৱিষ্যৎ নিধি", "পিএফ",               // Assamese
+            "भविष्य कोष", "पिएफ",                   // Nepali
         )
         if (epfoKw.any { lower.contains(it) }) types.add("EPFO")
 
@@ -896,6 +998,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ആധാർ", "യുഐഡി",
             "ಆಧಾರ್", "ಯುಐಡಿ",
             "ஆதார்", "யுஐடி",
+            "আধার", "ইউআইডি",        // Bengali
+            "આધાર", "યૂઆઇડી",        // Gujarati
+            "आधार", "यूआयडी",         // Marathi
+            "ଆଧାର",                   // Odia
+            "আধাৰ",                   // Assamese
+            "आधार",                    // Nepali
         )
         if (uidaiKw.any { lower.contains(it) }) types.add("UIDAI")
 
@@ -907,6 +1015,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "പാസ്‌പോർട്ട്",
             "ಪಾಸ್‌ಪೋರ್ಟ್",
             "பாஸ்போர்ட்",
+            "পাসপোর্ট",               // Bengali
+            "પાસપોર્ટ",               // Gujarati
+            "पासपोर्ट",                // Marathi
+            "ପାସପୋର୍ଟ",              // Odia
+            "পাছপোৰ্ট",               // Assamese
+            "राहदानी",                 // Nepali
         )
         if (passportKw.any { lower.contains(it) }) types.add("PASSPORT")
 
@@ -919,6 +1033,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "നബാർഡ്", "സ്വയം സഹായ സംഘം",
             "ನಬಾರ್ಡ್", "ಸ್ವಸಹಾಯ ಸಂಘ",
             "நபார்டு", "சுய உதவிக் குழு",
+            "নাবার্ড", "স্বনির্ভর গোষ্ঠী", "ক্ষুদ্রঋণ",  // Bengali
+            "નાબાર્ડ", "સ્વ-સહાય જૂથ",                  // Gujarati
+            "नाबार्ड", "बचत गट", "सूक्ष्म वित्त",          // Marathi
+            "ନାବାର୍ଡ", "ସ୍ୱ-ସାହାୟ ଗୋଷ୍ଠୀ",             // Odia
+            "নাবাৰ্ড", "স্বসহায় গোট",                    // Assamese
+            "नाबार्ड", "स्वसहायता समूह",                  // Nepali
         )
         if (nabardKw.any { lower.contains(it) }) types.add("NABARD")
 
@@ -931,14 +1051,47 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ആർടിഐ", "വിവരാവകാശം",
             "ಆರ್‌ಟಿಐ", "ಮಾಹಿತಿ ಹಕ್ಕು",
             "ஆர்டிஐ", "தகவல் உரிமை",
+            "আরটিআই", "তথ্য অধিকার",           // Bengali
+            "આરટીઆઇ", "માહિતી અધિકાર",        // Gujarati
+            "आरटीआय", "माहिती अधिकार",         // Marathi
+            "ଆରଟିଆଇ", "ତଥ୍ୟ ଅଧିକାର",         // Odia
+            "আৰটিআই", "তথ্য অধিকাৰ",          // Assamese
+            "आरटीआई", "सूचनाको हक",            // Nepali
         )
-        if (rtiKw.any { lower.contains(it) }) types.add("SIC")
+        if (rtiKw.any { lower.contains(it) }) types.add("CIC")
+
+        // RTO — vehicle registration, driving licence, permit, road tax
+        val rtoKw = setOf(
+            "rto", "vehicle registration", "driving licence", "driving license",
+            "rc book", "fitness certificate", "road tax", "motor vehicle", "permit",
+            "वाहन पंजीकरण", "ड्राइविंग लाइसेंस", "परमिट",
+            "వాహన నమోదు", "డ్రైవింగ్ లైసెన్స్",
+            "വാഹന രജിസ്ട്രേഷൻ", "ഡ്രൈവിംഗ് ലൈസൻസ്",
+            "ವಾಹನ ನೋಂದಣಿ", "ಚಾಲನಾ ಪರವಾನಗಿ",
+            "வாகன பதிவு", "ஓட்டுநர் உரிமம்",
+            "যানবাহন নিবন্ধন", "ড্রাইভিং লাইসেন্স",     // Bengali
+            "વાહન નોંધણી", "ડ્રાઇવિંગ લાઇસન્સ",         // Gujarati
+            "वाहन नोंदणी", "वाहन परवाना",                  // Marathi
+            "ଯାନ ପଞ୍ଜୀକରଣ", "ଡ୍ରାଇଭିଂ ଲାଇସେନ୍ସ",      // Odia
+            "যান পঞ্জীয়ন", "ড্ৰাইভিং লাইচেন্স",         // Assamese
+            "सवारी दर्ता", "सवारी चालक अनुमतिपत्र",       // Nepali
+        )
+        if (rtoKw.any { lower.contains(it) }) types.add("RTO")
 
         // NCSC — SC/ST commission for atrocity/discrimination
         val ncscKw = setOf(
             "atrocity", "discrimination", "ncsc", "sc/st commission", "untouchability",
             "अत्याचार", "भेदभाव",
             "అఘాయిత్యం", "వివక్ష",
+            "അക്രമം", "വിവേചനം",              // Malayalam
+            "ದೌರ್ಜನ್ಯ", "ತಾರತಮ್ಯ",          // Kannada
+            "கொடுமை", "பாரபட்சம்",            // Tamil
+            "অত্যাচার", "বৈষম্য",             // Bengali
+            "અત્યાચાર", "ભેદભાવ",            // Gujarati
+            "अत्याचार", "भेदभाव",             // Marathi
+            "ଅତ୍ୟାଚାର", "ଭେଦଭାବ",           // Odia
+            "অত্যাচাৰ", "বৈষম্য",             // Assamese
+            "अत्याचार", "भेदभाव",             // Nepali
         )
         if (ncscKw.any { lower.contains(it) }) types.add("NCSC")
 
@@ -951,6 +1104,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ഒബിസി", "പിന്നോക്ക വർഗം",
             "ಒಬಿಸಿ", "ಹಿಂದುಳಿದ ವರ್ಗ",
             "ஓபிசி", "பிற்படுத்தப்பட்ட",
+            "ওবিসি", "অন্যান্য অনগ্রসর শ্রেণী",   // Bengali
+            "ઓબીસી", "અન્ય પછાત વર્ગ",           // Gujarati
+            "ओबीसी", "इतर मागासवर्गीय",           // Marathi
+            "ଓବିସି", "ଅନ୍ୟ ପଛୁଆ ଶ୍ରେଣୀ",       // Odia
+            "ওবিচি", "অন্য পিছপৰা শ্ৰেণী",       // Assamese
+            "ओबिसी", "अन्य पिछडिएको वर्ग",        // Nepali
         )
         if (ncbcKw.any { lower.contains(it) }) types.add("NCBC")
 
@@ -959,6 +1118,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ncst", "scheduled tribe commission", "st rights", "tribal atrocity",
             "अनुसूचित जनजाति आयोग",
             "షెడ్యూల్డ్ తెగల కమిషన్",
+            "তফসিলি উপজাতি কমিশন",       // Bengali
+            "અનુસૂચિત જનજાતિ આ",         // Gujarati
+            "अनुसूचित जमाती आयोग",        // Marathi
+            "ଅନୁସୂଚିତ ଜନଜାତି ଆୟୋଗ",     // Odia
+            "অনুসূচিত জনজাতি আয়োগ",     // Assamese
+            "अनुसूचित जनजाति आयोग",       // Nepali
         )
         if (ncstKw.any { lower.contains(it) }) types.add("NCST")
 
@@ -971,6 +1136,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "വനിതാ കമ്മിഷൻ", "ലൈംഗിക പീഡനം",
             "ಮಹಿಳಾ ಆಯೋಗ", "ಲೈಂಗಿಕ ಕಿರುಕುಳ",
             "பெண்கள் ஆணையம்", "பாலியல் துன்புறுத்தல்",
+            "মহিলা কমিশন", "যৌন হয়রানি",    // Bengali
+            "મહિલા આયોગ", "જાતીય ઉત્પીડન", // Gujarati
+            "महिला आयोग", "लैंगिक छळ",       // Marathi
+            "ମହିଳା ଆୟୋଗ", "ଯୌନ ହୟରାଣ",   // Odia
+            "মহিলা আয়োগ", "যৌন হাৰাশমেন্ট", // Assamese
+            "महिला आयोग", "यौन दुर्व्यवहार", // Nepali
         )
         if (ncwKw.any { lower.contains(it) }) types.add("NCW")
 
@@ -983,6 +1154,12 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "മനുഷ്യാവകാശം", "കസ്റ്റഡി മരണം",
             "ಮಾನವ ಹಕ್ಕು", "ಕಸ್ಟಡಿ ಸಾವು",
             "மனித உரிமை", "காவல் நிலையத்தில் மரணம்",
+            "মানবাধিকার", "হেফাজতে মৃত্যু",    // Bengali
+            "માનવ અધિકાર", "કસ્ટડીમાં મૃત્યુ", // Gujarati
+            "मानवाधिकार", "कोठडीत मृत्यू",      // Marathi
+            "ମାନବ ଅଧିକାର", "ହାଜତ ମୃତ୍ୟୁ",    // Odia
+            "মানৱ অধিকাৰ", "হাজতত মৃত্যু",     // Assamese
+            "मानव अधिकार", "हिरासतमा मृत्यु",  // Nepali
         )
         if (nhrcKw.any { lower.contains(it) }) types.add("NHRC")
 
@@ -997,7 +1174,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
             "ಎಲ್ಲಿ", "ವಿಳಾಸ", "ಕಚೇರಿ",                  // Kannada
             "எங்கே", "முகவரி", "அலுவலகம்",               // Tamil
             "কোথায়", "ঠিকানা", "অফিস",                   // Bengali
-            "ক্যাঁ", "સरनामु", "કচेरी",                  // Gujarati
+            "ક્યાં", "સરનામું", "કચેરી",                  // Gujarati
             "कुठे", "पत्ता", "कार्यालय",                   // Marathi
             "କେଉଁଠି", "ଠିକଣା", "କାର୍ଯ୍ୟାଳୟ",             // Odia
             "ক'ত", "ঠিকনা", "কাৰ্যালয়",                  // Assamese

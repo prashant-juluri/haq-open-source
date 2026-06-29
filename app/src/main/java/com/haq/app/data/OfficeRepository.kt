@@ -11,11 +11,12 @@ import java.io.File
  * Read-only access to offices.db shipped in assets.
  *
  * offices.db contains government offices relevant to Haq's use cases:
- *   - DLSA  (District Legal Services Authority) — free legal aid
- *   - Labour (district labour enforcement offices)
+ *   AGRI, CIC, CMO, COLLECTOR, DCDRC, DEO, DLSA, EPFO, FCS, INSOMBU,
+ *   LABOUR, MGNREGA, NABARD, NCBC, NCSC, NCST, NCW, NHRC, PASSPORT,
+ *   PMJAY, PMKISAN, RTO, SP, SW, TRIBAL, UIDAI, WCD
  *
  * Schema:
- *   offices(id, state, district, office_type, name, address, phone, rag_chunk)
+ *   offices(id, state, district, office_type, name, address, phone, rag_chunk, lat, lng, maps_url)
  *
  * Search returns rag_chunks for offices in the user's state/district that
  * match the query's office types.  Falls back to state-level results when
