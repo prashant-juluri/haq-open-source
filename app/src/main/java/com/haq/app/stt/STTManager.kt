@@ -1,6 +1,7 @@
 package com.haq.app.stt
 
 import android.content.ComponentName
+import com.haq.app.inference.InferenceEngine
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -22,6 +23,10 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 object STTManager {
+
+    // Exploration flag — set true to route Whisper languages through Gemma's
+    // built-in audio encoder instead. Flip to false to revert to Whisper path.
+    const val USE_GEMMA_AUDIO = true
 
     private const val GOOGLE_STT_PACKAGE = "com.google.android.googlequicksearchbox"
     private const val GOOGLE_TTS_PACKAGE  = "com.google.android.tts"
@@ -356,10 +361,16 @@ object STTManager {
         context: Context,
         languageTag: String? = null,
         onVadComplete: (() -> Unit)? = null,
+        inferenceEngine: InferenceEngine? = null,
     ): String {
         appContext = context.applicationContext
         val twoLetter = languageTag?.let { toTwoLetter(it) }
         if (twoLetter != null && twoLetter in WHISPER_LANGUAGES) {
+            if (USE_GEMMA_AUDIO && inferenceEngine != null) {
+                return transcribeWithGemmaAudio(
+                    context.applicationContext, twoLetter, inferenceEngine, onVadComplete
+                )
+            }
             return transcribeWithWhisper(context.applicationContext, twoLetter, onVadComplete)
         }
         return recordAndTranscribeWithLanguage(languageTag = languageTag, isOnboarding = false)
@@ -394,6 +405,51 @@ object STTManager {
         // Signal caller so UI can transition from LISTENING to PROCESSING.
         onVadComplete?.invoke()
         return engine.transcribe(samples, WhisperConfig.languageToken(langCode))
+    }
+
+    // ── Gemma audio path ─────────────────────────────────────────────────────
+
+    /**
+     * Records audio with VAD then transcribes using Gemma 4 E2B's built-in
+     * audio encoder. Replaces the Whisper path when [USE_GEMMA_AUDIO] is true.
+     *
+     * The same [AudioRecorder] and VAD logic is reused — only the inference
+     * backend changes. The collected transcript is returned as a plain string,
+     * identical to what [transcribeWithWhisper] would return, so the rest of
+     * the ViewModel pipeline is unaffected.
+     */
+    private suspend fun transcribeWithGemmaAudio(
+        context: Context,
+        langCode: String,
+        engine: InferenceEngine,
+        onVadComplete: (() -> Unit)? = null,
+    ): String {
+        val languageName = langCodeToName(langCode)
+        val recorder = AudioRecorder()
+        val samples = recorder.recordWithVad()
+        if (samples.isEmpty()) return ""
+        onVadComplete?.invoke()
+
+        val transcript = StringBuilder()
+        engine.transcribeAudio(samples, languageName).collect { chunk ->
+            transcript.append(chunk)
+        }
+        val result = transcript.toString().trim()
+        Log.d("Haq/GemmaAudio", "Transcript ($langCode): \"$result\"")
+        return result
+    }
+
+    /** Maps two-letter language codes to full names for the Gemma transcription prompt. */
+    private fun langCodeToName(code: String): String = when (code) {
+        "te" -> "Telugu"
+        "ml" -> "Malayalam"
+        "kn" -> "Kannada"
+        "ta" -> "Tamil"
+        "bn" -> "Bengali"
+        "gu" -> "Gujarati"
+        "mr" -> "Marathi"
+        "ne" -> "Nepali"
+        else -> "English"
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────

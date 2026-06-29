@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class LiteRTEngine(private val context: Context) : InferenceEngine {
 
@@ -55,11 +57,12 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
                 val config = EngineConfig(
                     modelPath,
                     Backend.CPU(),
-                    null,          // visionBackend — Haq is text-only; the E2B vision encoder
-                                   // has 3 signatures (vision_70/140/280) but the SDK expects
-                                   // exactly 1, so disabling it avoids INVALID_ARGUMENT crash.
-                    null,          // audioBackend  — STT uses Android SpeechRecognizer; Gemma
-                                   // audio input not used in current implementation.
+                    null,           // visionBackend — E2B vision encoder has 3 signatures
+                                    // (vision_70/140/280) but SDK expects exactly 1; disabled
+                                    // to avoid INVALID_ARGUMENT crash.
+                    Backend.CPU(),  // audioBackend — enabled for Gemma audio STT exploration.
+                                    // Activates the E2B audio encoder (~300 M params, 16 kHz,
+                                    // max 30 s). Set to null to revert to Whisper path.
                     MAX_TOKENS,
                     context.cacheDir.absolutePath,
                 )
@@ -154,12 +157,117 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
         }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * Exploration: transcribe [pcmSamples] (16 kHz, 16-bit mono from AudioRecord)
+     * via Gemma 4 E2B's built-in audio encoder.
+     *
+     * Converts int16 PCM → float32 [-1, 1] as expected by the encoder, then sends
+     * a minimal Contents message (AudioBytes + Text instruction) on a fresh
+     * conversation so it doesn't pollute the welfare assistant's KV cache.
+     *
+     * Max audio: 30 s (750 encoder frames @ 25 fps). Longer audio is silently
+     * truncated by the model. Streams raw transcript tokens — caller collects
+     * and joins into the final transcript string.
+     */
+    override fun transcribeAudio(pcmSamples: FloatArray, languageName: String): Flow<String> =
+        callbackFlow {
+            Log.d(TAG_AUDIO, "transcribeAudio() called — ${pcmSamples.size} samples " +
+                "(${pcmSamples.size / 16000f}s), lang=$languageName")
+            val eng = engine ?: run {
+                Log.e(TAG_AUDIO, "Engine not ready")
+                close()
+                return@callbackFlow
+            }
+
+            // Use a separate conversation so audio transcription doesn't share
+            // KV cache with the welfare assistant conversation.
+            val conversation: Conversation = eng.createConversation(
+                ConversationConfig(Contents.of(TRANSCRIPTION_SYSTEM_PROMPT))
+            )
+            Log.d(TAG_AUDIO, "Transcription conversation created")
+
+            val audioBytes = floatArrayToBytes(pcmSamples)
+            val tokenBuffer = StringBuilder()
+
+            conversation.sendMessageAsync(
+                Contents.of(
+                    Content.AudioBytes(audioBytes),
+                    Content.Text(
+                        "Transcribe exactly what was spoken in the audio above. " +
+                        "Output ONLY the transcription in $languageName. " +
+                        "Do not translate, summarise, or add any commentary."
+                    )
+                ),
+                object : MessageCallback {
+                    override fun onMessage(message: Message) {
+                        val text = message.contents.contents
+                            .filterIsInstance<Content.Text>()
+                            .joinToString("") { it.text }
+                        tokenBuffer.append(text)
+                        val buf = tokenBuffer.toString()
+                        if (buf.contains("<end_of_turn>") ||
+                            buf.contains("<start_of_turn>model") ||
+                            buf.contains("</s>")) {
+                            close()
+                            return
+                        }
+                        if (!buf.contains("<")) {
+                            if (buf.isNotEmpty()) trySend(buf)
+                            tokenBuffer.clear()
+                            return
+                        }
+                        val ltIndex = buf.indexOf("<")
+                        if (ltIndex > 0) {
+                            trySend(buf.substring(0, ltIndex))
+                            tokenBuffer.clear()
+                            tokenBuffer.append(buf.substring(ltIndex))
+                        }
+                    }
+                    override fun onDone() {
+                        val remaining = tokenBuffer.toString()
+                            .replace("<end_of_turn>", "")
+                            .replace("<start_of_turn>", "")
+                            .trim()
+                        if (remaining.isNotEmpty()) trySend(remaining)
+                        tokenBuffer.clear()
+                        close()
+                    }
+                    override fun onError(e: Throwable) {
+                        Log.e(TAG_AUDIO, "transcribeAudio error: ${e.message}", e)
+                        close(e)
+                    }
+                }
+            )
+
+            awaitClose {
+                tokenBuffer.clear()
+                try { conversation.cancelProcess() } catch (e: Exception) {}
+                try { conversation.close() } catch (e: Exception) {}
+                Log.d(TAG_AUDIO, "Transcription conversation closed")
+            }
+        }.flowOn(Dispatchers.IO)
+
     fun shutdown() {
         engine?.close()
         engineScope.cancel()
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Converts 16-bit PCM samples from AudioRecord to float32 bytes in [-1, 1]
+     * as expected by the Gemma 4 E2B audio encoder.
+     * int16 range [-32768, 32767] → divide by 32768f → float32 [-1, 1].
+     */
+    private fun floatArrayToBytes(samples: FloatArray): ByteArray {
+        val buffer = ByteBuffer
+            .allocate(samples.size * 4)
+            .order(ByteOrder.LITTLE_ENDIAN)
+        for (sample in samples) {
+            buffer.putFloat(sample)
+        }
+        return buffer.array()
+    }
 
     private fun modelFilePath(): String {
         val f = File(context.filesDir, MODEL_ASSET)
@@ -168,12 +276,20 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
     }
 
     companion object {
+        private const val TAG_AUDIO   = "Haq/GemmaAudio"
         private const val MODEL_ASSET = "gemma-4-E2B-it.litertlm"
         // prefill_1024 writes a 1024-slot chunk starting at the current KV cache
         // position. System prompt (~70 tokens) is prefilled first, so the user-turn
         // prefill runs from ~position 70 and needs slots [70…1094]. The KV cache must
         // be larger than 1094 — 2048 gives comfortable headroom for longer queries too.
         private const val MAX_TOKENS  = 2048
+
+        // Minimal system prompt for the transcription-only conversation.
+        // Kept separate from SYSTEM_PROMPT so the welfare persona doesn't
+        // bleed into pure transcription output.
+        private const val TRANSCRIPTION_SYSTEM_PROMPT =
+            "You are a transcription assistant. When given audio, output only " +
+            "the exact words spoken. Never translate, summarise, or add commentary."
 
         private const val SYSTEM_PROMPT =
             "You are Haq, a trusted guide helping marginalised Indian citizens " +

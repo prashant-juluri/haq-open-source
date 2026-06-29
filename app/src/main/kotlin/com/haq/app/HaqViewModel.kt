@@ -291,6 +291,7 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                         _appState.value = AppState.THINKING
                         _responseText.value = ""
                     },
+                    inferenceEngine = GemmaManager,
                 )
                 Log.d("Haq/STT", "Transcript: \"$transcript\"")
                 if (transcript.isNotBlank()) {
