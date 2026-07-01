@@ -1,6 +1,7 @@
 package com.haq.app.stt
 
 import android.content.ComponentName
+import com.haq.app.inference.InferenceEngine
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -32,23 +33,17 @@ object STTManager {
     // googlequicksearchbox with network.
     private val AIAI_CAPABLE = setOf("en-IN", "hi-IN")
 
-    // Two-letter codes handled by Whisper ONNX on-device — no network required.
-    // or/as are NOT in this set (Odia/Assamese are not in Whisper's 99 languages).
-    private val WHISPER_LANGUAGES = setOf("te", "ml", "kn", "ta", "bn", "gu", "mr", "ne")
-
-    // Singleton WhisperEngine — initialised lazily on first use.
-    private var whisperEngine: WhisperEngine? = null
-
-    /** True when [languageCode] is handled by Whisper ONNX (not SpeechRecognizer). */
-    fun isWhisperLanguage(languageCode: String): Boolean = languageCode in WHISPER_LANGUAGES
+    // Two-letter codes handled by Gemma 4 E2B's audio encoder on-device — no network required.
+    // or/as are NOT in this set and fall through to network STT.
+    private val GEMMA_AUDIO_LANGUAGES = setOf("te", "ml", "kn", "ta", "bn", "gu", "mr", "ne")
 
     /**
      * Returns true when [languageCode] needs a network connection for STT.
-     * AiAi languages (en, hi) and Whisper languages are fully offline.
+     * AiAi languages (en, hi) and Gemma audio languages are fully offline.
      * or/as require network.
      */
     fun requiresNetwork(languageCode: String): Boolean {
-        if (languageCode in WHISPER_LANGUAGES) return false
+        if (languageCode in GEMMA_AUDIO_LANGUAGES) return false
         return toBcp47(languageCode) !in AIAI_CAPABLE
     }
 
@@ -347,8 +342,8 @@ object STTManager {
      * Main app: pass the user's profile language code ("hi", "te", "ml",
      * "kn", "en") or a BCP-47 tag. Pass null for device auto-detection.
      *
-     * For [WHISPER_LANGUAGES] (te/ml/kn/ta/bn/gu/mr/ne) the call bypasses
-     * SpeechRecognizer entirely and runs Whisper ONNX on-device.
+     * For [GEMMA_AUDIO_LANGUAGES] (te/ml/kn/ta/bn/gu/mr/ne) the call bypasses
+     * SpeechRecognizer entirely and uses Gemma 4 E2B's audio encoder on-device.
      * For en/hi it uses AiAi (on-device via SpeechRecognizer).
      * For or/as it falls through to the network STT path.
      */
@@ -356,44 +351,59 @@ object STTManager {
         context: Context,
         languageTag: String? = null,
         onVadComplete: (() -> Unit)? = null,
+        inferenceEngine: InferenceEngine? = null,
     ): String {
         appContext = context.applicationContext
         val twoLetter = languageTag?.let { toTwoLetter(it) }
-        if (twoLetter != null && twoLetter in WHISPER_LANGUAGES) {
-            return transcribeWithWhisper(context.applicationContext, twoLetter, onVadComplete)
+        if (twoLetter != null && twoLetter in GEMMA_AUDIO_LANGUAGES && inferenceEngine != null) {
+            return transcribeWithGemmaAudio(
+                context.applicationContext, twoLetter, inferenceEngine, onVadComplete
+            )
         }
         return recordAndTranscribeWithLanguage(languageTag = languageTag, isOnboarding = false)
     }
 
-    // ── Whisper path ──────────────────────────────────────────────────────────
+    // ── Gemma audio path ─────────────────────────────────────────────────────
 
     /**
-     * Records audio with VAD and transcribes using Whisper ONNX on-device.
-     * Initialises [WhisperEngine] lazily on first call (~1-2 s overhead once).
-     * If model files are not present, throws so the caller can surface an error.
+     * Records audio with VAD then transcribes using Gemma 4 E2B's built-in
+     * audio encoder on-device. No network required.
      */
-    private suspend fun transcribeWithWhisper(
+    private suspend fun transcribeWithGemmaAudio(
         context: Context,
         langCode: String,
+        engine: InferenceEngine,
         onVadComplete: (() -> Unit)? = null,
     ): String {
-        if (!WhisperEngine.isAvailable(context)) {
-            throw IllegalStateException(
-                "Whisper models not found in filesDir/whisper/ — " +
-                "adb push encoder_model.onnx, decoder_model_merged.onnx, tokenizer.json"
-            )
-        }
-        val engine = whisperEngine ?: WhisperEngine(context).also {
-            it.init()
-            whisperEngine = it
-        }
+        val languageName = langCodeToName(langCode)
         val recorder = AudioRecorder()
-        val samples  = recorder.recordWithVad()
+        // AudioRecorder.recordWithVad() defaults to MAX_DURATION_MS = 10 s, well within
+        // Gemma 4 E2B's 30 s encoder limit. If maxDurationMs is ever raised above 30 s,
+        // the encoder silently truncates without error — keep this ceiling in mind.
+        val samples = recorder.recordWithVad()
         if (samples.isEmpty()) return ""
-        // VAD complete — recording stopped, inference about to start.
-        // Signal caller so UI can transition from LISTENING to PROCESSING.
         onVadComplete?.invoke()
-        return engine.transcribe(samples, WhisperConfig.languageToken(langCode))
+
+        val transcript = StringBuilder()
+        engine.transcribeAudio(samples, languageName).collect { chunk ->
+            transcript.append(chunk)
+        }
+        val result = transcript.toString().trim()
+        Log.d("Haq/GemmaAudio", "Transcript ($langCode): \"$result\"")
+        return result
+    }
+
+    /** Maps two-letter language codes to full names for the Gemma transcription prompt. */
+    private fun langCodeToName(code: String): String = when (code) {
+        "te" -> "Telugu"
+        "ml" -> "Malayalam"
+        "kn" -> "Kannada"
+        "ta" -> "Tamil"
+        "bn" -> "Bengali"
+        "gu" -> "Gujarati"
+        "mr" -> "Marathi"
+        "ne" -> "Nepali"
+        else -> "English"
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
@@ -514,15 +524,8 @@ object STTManager {
         }
     }
 
-    /**
-     * Releases the WhisperEngine ONNX sessions and native memory.
-     * Call from HaqViewModel.onCleared() so the ~144 MB of ONNX session memory
-     * is released when the ViewModel is destroyed rather than waiting for GC.
-     */
     fun shutdown() {
-        whisperEngine?.close()
-        whisperEngine = null
-        Log.d("Haq/STT", "STTManager shutdown — WhisperEngine released")
+        // no-op: Gemma audio uses GemmaManager which has its own shutdown
     }
 
     /** Maps two-letter language codes to BCP-47 tags for SpeechRecognizer. */

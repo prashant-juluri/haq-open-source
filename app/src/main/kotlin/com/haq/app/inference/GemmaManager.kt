@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -15,13 +16,14 @@ import java.io.File
 /**
  * The only inference entry point for the rest of the app.
  * No LiteRT types are exposed beyond this file.
+ * Implements [InferenceEngine] so it can be passed to STTManager for audio transcription.
  */
-object GemmaManager {
+object GemmaManager : InferenceEngine {
 
     private lateinit var engine: LiteRTEngine
     private var appContext: Context? = null
 
-    val state: StateFlow<EngineState>
+    override val state: StateFlow<EngineState>
         get() = engine.state
 
     /** Call once after [ModelDownloadManager] emits [DownloadState.Complete]. */
@@ -60,7 +62,18 @@ object GemmaManager {
         engine = LiteRTEngine(context.applicationContext)
     }
 
-    fun generateResponse(prompt: String): Flow<String> {
+    /**
+     * Exploration: transcribe [pcmSamples] via Gemma 4 E2B's audio encoder.
+     * Delegates to [LiteRTEngine.transcribeAudio]. Returns empty flow if the
+     * engine is not yet initialised.
+     */
+    override fun transcribeAudio(pcmSamples: FloatArray, languageName: String): Flow<String> {
+        if (!::engine.isInitialized) return emptyFlow()
+        Log.d("Haq/GemmaAudio", "transcribeAudio via GemmaManager — lang=$languageName")
+        return engine.transcribeAudio(pcmSamples, languageName)
+    }
+
+    override fun generateResponse(prompt: String): Flow<String> {
         Log.d("Haq/Gemma", "generateResponse() engine hashCode=${engine.hashCode()}")
         return engine.generateResponse(prompt)
             .catch { e ->

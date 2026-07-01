@@ -17,4 +17,16 @@ sealed class EngineState {
 interface InferenceEngine {
     val state: StateFlow<EngineState>
     fun generateResponse(prompt: String): Flow<String>
+
+    /**
+     * Exploration: transcribe [pcmSamples] (16 kHz, 16-bit mono from AudioRecord)
+     * using the model's built-in audio encoder. Streams the raw transcript tokens.
+     * [languageName] is the full language name ("Telugu", "Malayalam", etc.) used
+     * to instruct the model which script to output.
+     *
+     * Only meaningful when the underlying model has an audio encoder (Gemma 4 E2B/E4B).
+     * Returns an empty flow if audio is not supported by the implementation.
+     */
+    fun transcribeAudio(pcmSamples: FloatArray, languageName: String): Flow<String> =
+        kotlinx.coroutines.flow.emptyFlow()
 }

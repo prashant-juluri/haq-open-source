@@ -36,7 +36,7 @@ class AudioRecorder {
      */
     suspend fun recordWithVad(maxDurationMs: Int = MAX_DURATION_MS): FloatArray =
         withContext(Dispatchers.IO) {
-            val sampleRate  = WhisperConfig.SAMPLE_RATE
+            val sampleRate  = 16_000
             val chunkSize   = sampleRate * VAD_CHUNK_MS / 1000
             val minBufSize  = AudioRecord.getMinBufferSize(
                 sampleRate,
@@ -116,7 +116,7 @@ class AudioRecorder {
      * the Whisper path always uses [recordWithVad].
      */
     suspend fun record(durationMs: Int): FloatArray = withContext(Dispatchers.IO) {
-        val sampleRate   = WhisperConfig.SAMPLE_RATE
+        val sampleRate   = 16_000
         val totalSamples = sampleRate * durationMs / 1000
         val minBufSize   = AudioRecord.getMinBufferSize(
             sampleRate,
