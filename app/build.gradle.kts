@@ -51,7 +51,7 @@ android {
     // .litertlm files must not be compressed so LiteRT can mmap them.
     // The model is NOT bundled in the APK (>2 GB); see push instructions below.
     androidResources {
-        noCompress += listOf("litertlm", "onnx", "bin")
+        noCompress += listOf("litertlm")
     }
 }
 
@@ -120,8 +120,6 @@ dependencies {
     // ── Biometric (PIN + face fallback) ─────────────────────────────────────
     implementation("androidx.biometric:biometric:1.1.0")
 
-    // ── ONNX Runtime — Whisper encoder/decoder inference (on-device) ─────────
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
     // ── OkHttp — one-time model download over WiFi ───────────────────────────
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

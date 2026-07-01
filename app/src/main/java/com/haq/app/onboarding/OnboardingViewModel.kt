@@ -8,7 +8,6 @@ import com.haq.app.data.ProfileManager
 import com.haq.app.data.SessionManager
 import com.haq.app.inference.GemmaManager
 import com.haq.app.stt.STTManager
-import com.haq.app.stt.WhisperDownloadManager
 import com.haq.app.tts.TTSManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -17,7 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 sealed class OnboardingStep {
@@ -197,32 +195,6 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             // when it can't find a local model but has network access).
             STTManager.triggerOfflineModelDownload(getApplication(), languageCode)
 
-            // ── Whisper download (parallel with voice/model preparation) ─────────
-            // For te/ml/kn/ta/bn/gu/mr/ne: download encoder+decoder+tokenizer
-            // from HuggingFace on first use. AiAi (en/hi) and network (or/as)
-            // languages skip this entirely.
-            val whisperReady = AtomicBoolean(
-                !STTManager.isWhisperLanguage(languageCode) ||
-                WhisperDownloadManager.isAvailable(getApplication())
-            )
-            if (!whisperReady.get()) {
-                launch {
-                    try {
-                        Log.d("Haq/Onboard", "Starting Whisper model download for $languageCode")
-                        WhisperDownloadManager.download(getApplication()) { pct ->
-                            _preparingStatus.value = "Getting Haq ready... $pct%"
-                        }
-                        whisperReady.set(true)
-                        Log.d("Haq/Onboard", "Whisper model download complete")
-                    } catch (e: Exception) {
-                        Log.e("Haq/Onboard", "Whisper download failed: ${e.message}")
-                        // Don't block forever — surface InstallingVoicePacks escape hatch
-                        // so the user has an exit. STT will throw if models are still missing.
-                        whisperReady.set(true)
-                    }
-                }
-            }
-
             // Counter of 5 s cycles to wait before the next testSpeak() call.
             // 0 = test immediately, N > 0 = wait N more cycles.
             var testSpeakCountdown = 0
@@ -238,22 +210,17 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             while (true) {
                 val modelReady    = GemmaManager.isModelReady(getApplication())
                 val voiceMissing  = !TTSManager.checkLanguageSupport(languageCode)
-                val whisperDone   = whisperReady.get()
 
-                // Only update the status text here when not already showing download progress —
-                // the download coroutine writes "Downloading offline speech model... N%" while
-                // active; we overwrite only when the download is complete or not needed.
-                if (whisperDone) updatePreparingStatus(voiceMissing, !modelReady)
+                updatePreparingStatus(voiceMissing, !modelReady)
 
                 Log.d("Haq/Onboard",
                     "Single-lang readiness poll: lang=$languageCode " +
                     "modelReady=$modelReady voiceMissing=$voiceMissing " +
-                    "whisperReady=$whisperDone " +
                     "testSpeakIn=${testSpeakCountdown * 5}s " +
                     "voiceMissingCycles=$voiceMissingCycles")
 
-                // Gate: all three must be ready before testing synthesis
-                if (modelReady && whisperDone) {
+                // Gate: model and TTS voice must be ready before testing synthesis
+                if (modelReady) {
                     if (voiceMissing) {
                         // Voice entry absent — re-signal download intent via setLanguage.
                         TTSManager.ensureVoiceDownloading(languageCode)

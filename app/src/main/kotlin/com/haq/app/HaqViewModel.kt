@@ -17,7 +17,6 @@ import com.haq.app.inference.EngineState
 import com.haq.app.inference.GemmaManager
 import com.haq.app.inference.ModelDownloadManager
 import com.haq.app.stt.STTManager
-import com.haq.app.stt.WhisperDownloadManager
 import com.haq.app.tts.TTSManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -256,29 +255,6 @@ class HaqViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("Haq/VM", "Mic: lang=$langTag needs network but offline — showing NoWifi prompt")
                 _noWifiForMic.value = true
                 return@launch
-            }
-
-            // Whisper languages (te/ml/kn/ta/bn/gu/mr/ne): if model files are not present
-            // (e.g. fresh install, data cleared), download them before starting STT.
-            // Normally this happens during onboarding PreparingVoices — this is a safety net.
-            if (STTManager.isWhisperLanguage(langTag) &&
-                !WhisperDownloadManager.isAvailable(getApplication())) {
-                Log.d("Haq/VM", "Whisper models missing for $langTag — downloading now")
-                _appState.value = AppState.THINKING
-                try {
-                    WhisperDownloadManager.download(getApplication()) { pct ->
-                        _responseText.value = "Downloading offline speech model... $pct%"
-                    }
-                    _responseText.value = ""
-                    _appState.value = AppState.READY
-                    // Models are now ready — user taps mic again to start listening.
-                    return@launch
-                } catch (e: Exception) {
-                    Log.e("Haq/VM", "Whisper download failed: ${e.message}")
-                    _responseText.value = "Download failed. Please connect to the internet and try again."
-                    _appState.value = AppState.READY
-                    return@launch
-                }
             }
 
             _appState.value = AppState.LISTENING
