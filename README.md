@@ -36,7 +36,7 @@ Every step runs on-device. No cloud. No account. No internet after first setup.
 | UI | Kotlin + Jetpack Compose |
 | LLM | Gemma 4 E2B via LiteRT-LM (on-device) |
 | STT — English/Hindi | Google AiAi (on-device, pre-installed) |
-| STT — 8 Indian languages | Whisper-small int8-quantized ONNX via ORT Android |
+| STT — 8 Indian languages | Gemma 4 E2B built-in audio encoder (on-device, no separate download) |
 | TTS | Android TTS API (Google engine, explicit) |
 | Knowledge base | SQLite — 4,545 schemes, 780 laws, 862 offices |
 | Vector search | sqlite-vec (cosine similarity, on-device) |
@@ -74,12 +74,12 @@ Language selected
       │
       ├─ en-IN / hi-IN ──► AiAi (com.google.android.as) — fully offline, pre-installed
       │
-      ├─ te/ml/kn/ta/bn/gu/mr/ne ──► Whisper-small ONNX — offline after one-time ~250 MB download
+      ├─ te/ml/kn/ta/bn/gu/mr/ne ──► Gemma 4 E2B audio encoder — fully offline, no separate download
       │
-      └─ or/as ──► GoogleTTSRecognitionService — network required (not in Whisper's language set)
+      └─ or/as ──► GoogleTTSRecognitionService — network required
 ```
 
-Whisper runs entirely outside Android's `SpeechRecognizer` API — raw `AudioRecord` → 16 kHz PCM → mel spectrogram → ONNX encoder/decoder inference → BPE tokenizer decode. This gives complete offline control with no dependency on Google's STT backend for Dravidian languages.
+For te/ml/kn/ta/bn/gu/mr/ne, audio routes directly through the same Gemma 4 E2B model already loaded for inference — raw `AudioRecord` → 16 kHz PCM → WAV container → `Content.AudioBytes` → Gemma audio encoder → streamed transcript tokens. This eliminates the separate Whisper model download and delivers significantly better transcription quality on Indic languages, particularly Dravidian scripts.
 
 ---
 
@@ -100,23 +100,19 @@ The InferenceEngine interface abstracts all LiteRT calls so the ViewModel and UI
 
 A deliberate design choice: Gemma is used for text-in / text-out RAG rather than its native voice input mode. Injecting structured scheme context — eligibility rules, benefit amounts, document lists — into a text prompt is straightforward and deterministic. Doing the same via voice prompt injection would require encoding structured data as spoken language, making it far harder to control what the model sees and to iterate on retrieval quality. Text prompting keeps the RAG context explicit and auditable.
 
+Gemma 4 E2B also serves as the STT engine for 8 Indian languages via its built-in audio encoder. A separate conversation (isolated KV cache, transcription-only system prompt) handles audio → transcript, which then feeds into the standard RAG + inference pipeline. This means the 2.4 GB Gemma model handles both transcription and response generation — no second model required.
+
 ---
 
 ## Challenges and How We Solved Them
 
-### 1. Whisper inference on mid-range Android
+### 1. Indic language STT quality
 
-**Problem:** Float16 Whisper-small produces 4-minute inference for 5 seconds of audio on Snapdragon 6/7. ONNX Runtime Android has no hardware fp16 acceleration on this chip class — it falls back to float32 emulation.
+**Problem:** Whisper-small int8 produced unreliable transcriptions for Dravidian languages — Telugu would collapse into hallucination loops ("నినిని"), and transcription latency was ~4 seconds for a 10-second chunk on Snapdragon 6/7 with no hardware fp16 acceleration.
 
-**Solution:** Int8-quantized whisper-small from onnx-community. The quantized merged decoder (encoder KV + decoder KV in a single ONNX `If`-branched graph) runs in ~4 seconds for a 10-second audio chunk. Applying `quantize_dynamic` naively to the merged graph inflates it from 157 MB to 739 MB because QuantizeLinear/DequantizeLinear nodes are inserted inside both branches of every `If` node. We resolved this by quantizing the encoder and decoder separately before merging.
+**Solution:** Route te/ml/kn/ta/bn/gu/mr/ne directly through Gemma 4 E2B's built-in audio encoder via `Content.AudioBytes`. Audio is recorded at 16 kHz mono PCM, wrapped in a WAV container, and sent on a dedicated conversation (isolated KV cache, transcription-only system prompt) so it doesn't pollute the welfare assistant's context. Transcription quality is substantially better across all tested Indic languages, and eliminating Whisper removes the ~250 MB one-time model download entirely.
 
-### 2. Dravidian hallucination loops
-
-**Problem:** Telugu transcription would collapse into "నినిని" — a 3-token cycle that the naïve repetition guard (≤2 unique tokens in 16 windows) never caught, because the cycle has 3 unique tokens.
-
-**Solution:** N-gram cycle detection for N=2..6 firing after 3 consecutive identical N-grams, combined with a low-diversity fallback (≤3 unique tokens in 32 windows). This catches both single-token loops and multi-token hallucination cycles common in Dravidian script inference.
-
-### 3. Android SQLite has no FTS5
+### 2. Android SQLite has no FTS5
 
 **Problem:** FTS5 with `bm25()` relevance ranking — the standard Android full-text search approach — is not compiled into the system SQLite on Android. FTS4 is available but has no ranking function.
 
@@ -136,14 +132,14 @@ A deliberate design choice: Gemma is used for text-in / text-out RAG rather than
 |---|---|---|
 | English | AiAi offline | Google TTS |
 | Hindi | AiAi offline (downloads silently on first WiFi launch) | Google TTS |
-| Telugu | Whisper offline (one-time ~250 MB download) | Google TTS |
-| Malayalam | Whisper offline | Google TTS |
-| Kannada | Whisper offline | Google TTS |
-| Tamil | Whisper offline | Google TTS |
-| Bengali | Whisper offline | Google TTS |
-| Gujarati | Whisper offline | Google TTS |
-| Marathi | Whisper offline | Google TTS |
-| Nepali | Whisper offline | Google TTS |
+| Telugu | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
+| Malayalam | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
+| Kannada | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
+| Tamil | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
+| Bengali | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
+| Gujarati | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
+| Marathi | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
+| Nepali | Gemma 4 E2B audio encoder (offline, no separate download) | Google TTS |
 | Odia | Network STT | Google TTS |
 | Assamese | Network STT | Google TTS |
 
@@ -153,15 +149,11 @@ A deliberate design choice: Gemma is used for text-in / text-out RAG rather than
 
 We'd rather be honest about these than have a judge discover them.
 
-**Whisper inference latency** — On Snapdragon 6/7 devices, Whisper-small int8 takes ~4 seconds to transcribe a 10-second audio chunk. This is the ceiling for on-device ONNX inference on this chip class without hardware acceleration. Float16 was evaluated and rejected (4-minute inference). The latency is noticeable but acceptable for a welfare query workflow where the user is unlikely to be mid-sprint.
+**Telugu onboarding is non-deterministic** — Onboarding uses AiAi in auto-detect mode (null language tag). On our test device, this silently picks up the Telugu offline speech pack that Google Play Services had installed in the background. On a device where Telugu has never been set as a system language, this pack may not be present and onboarding STT will fail. Main-app Telugu STT (Gemma audio encoder) is unaffected — this is an onboarding-only issue.
 
-**Telugu onboarding is non-deterministic** — Onboarding uses AiAi in auto-detect mode (null language tag). On our test device, this silently picks up the Telugu offline speech pack that Google Play Services had installed in the background. On a device where Telugu has never been set as a system language, this pack may not be present and onboarding STT will fail. The main-app Telugu experience (Whisper) is unaffected — this is an onboarding-only issue.
+**Odia and Assamese always require network** — These two languages are not in Gemma 4 E2B's documented audio language set and have no AiAi offline pack. STT for or/as routes to Google's network recogniser. Everything else (Gemma inference, TTS, RAG) still runs offline.
 
-**Odia and Assamese always require network** — These two languages are not in Whisper's supported language set and have no AiAi offline pack. STT for or/as routes to Google's network recogniser. Everything else (Gemma, TTS, RAG) still runs offline.
-
-**First-launch download burden** — Gemma 4 E2B is 2.4 GB; Whisper-small is ~250 MB. Both require WiFi. On a 10 Mbps connection that is roughly 30–40 minutes of download before the app is fully operational. This is a hard constraint of on-device model delivery and not something that can be engineered away at this model size.
-
-**No streaming transcription** — Whisper transcribes complete chunks, not token-by-token. The user speaks, pauses, then sees the transcript. Real-time word-by-word display is not implemented.
+**First-launch download burden** — Gemma 4 E2B is 2.4 GB and requires WiFi. On a 10 Mbps connection that is roughly 30 minutes of download before the app is fully operational. This is a hard constraint of on-device model delivery. Unlike before, no second model download is needed — Gemma handles both STT and response generation.
 
 ---
 
@@ -183,7 +175,7 @@ No data leaves the device. Ever. There is no backend, no analytics, no crash rep
 2. Build and install from `main`
 3. On first launch, the app prompts for WiFi to download Gemma 4 E2B (~2.4 GB)
 4. Select English or Hindi — these work offline immediately via AiAi
-5. To use Telugu/Malayalam/Kannada/Tamil/Bengali/Gujarati/Marathi/Nepali — select the language; the app prompts for WiFi to download Whisper-small (~250 MB) once, then works permanently offline
+5. To use Telugu/Malayalam/Kannada/Tamil/Bengali/Gujarati/Marathi/Nepali — select the language; STT works immediately via Gemma's built-in audio encoder, no additional download required
 
 ---
 
@@ -191,7 +183,7 @@ No data leaves the device. Ever. There is no backend, no analytics, no crash rep
 
 **Gemma 4 E2B over a smaller model:** E2B is the minimum size that handles code-switching (users mixing Hindi and English mid-sentence), extracts structured fields reliably from noisy speech transcripts, and generates grammatically correct responses in Dravidian scripts. Smaller models collapse on Tamil and Telugu morphology.
 
-**Whisper-small over Whisper-tiny:** Tiny's WER on Telugu is ~40% higher than small's in informal speech. For a welfare navigator where a mishearing could mean a user misses their entitlement, accuracy matters more than the extra 100 MB.
+**Gemma 4 E2B audio encoder over Whisper:** Gemma 4's built-in audio encoder delivers substantially better transcription quality on Indic languages than Whisper-small int8, requires no separate model download, and runs within the same model already loaded for inference. The single 2.4 GB download replaces what was previously a 2.4 GB + 250 MB two-model setup.
 
 **On-device over cloud:** The target user has a prepaid SIM with 1–2 GB/month data. A cloud round-trip per query is not a product for them — it's a tax. Every design decision flows from this constraint.
 

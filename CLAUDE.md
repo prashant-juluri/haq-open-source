@@ -23,14 +23,14 @@ Tagline: Your rights. Your language. No middleman.
 - STT: Three-tier language-aware routing:
   - AiAi (`com.google.android.as`): en-IN (offline, pre-installed) and
     hi-IN (offline, downloads silently on first WiFi launch via `triggerModelDownload`)
-  - Whisper-small int8-quantized ONNX (via ONNX Runtime Android): te, ml, kn, ta, bn, gu, mr, ne —
-    fully offline after one-time ~250 MB WiFi download; bypasses SpeechRecognizer entirely;
-    uses AudioRecorder + VAD
-  - GoogleTTSRecognitionService: or, as only (Odia/Assamese — not in Whisper's 99 languages;
-    WiFi required always for these two)
+  - Gemma 4 E2B audio encoder (via LiteRT-LM `Content.AudioBytes`): te, ml, kn, ta, bn, gu, mr, ne —
+    fully offline, no separate download; audio recorded at 16 kHz mono PCM, wrapped in WAV container,
+    sent on an isolated conversation (TRANSCRIPTION_SYSTEM_PROMPT, separate KV cache);
+    bypasses SpeechRecognizer entirely; uses AudioRecorder + VAD
+  - GoogleTTSRecognitionService: or, as only (Odia/Assamese — not in Gemma 4 E2B's documented
+    audio language set; WiFi required always for these two)
   - Onboarding always passes null language tag → AiAi auto-detect, fully offline
-  - WiFi prompt shown in onboarding (`NoWifi` step) and main app (AlertDialog) for or/as
-    (always) and for te/ml/kn/ta/bn/gu/mr/ne on first use until Whisper models are cached
+  - WiFi prompt shown in onboarding (`NoWifi` step) and main app (AlertDialog) for or/as only
 - TTS: Android TTS API (Google TTS engine preferred explicitly)
 - Storage: SQLite via Room
 - Vector search: sqlite-vec
@@ -169,37 +169,36 @@ Prompt API / AICore without touching any other code.
 Never call LiteRT APIs directly from ViewModel or UI layer.
 
 ## Current build stage
-WEEK 4 COMPLETE — Hackathon-ready. Both end-to-end scenarios verified:
+WEEK 4 COMPLETE — Hackathon-ready. End-to-end scenarios verified:
 - English offline from start (AiAi en-IN, no network)
-- Telugu: WiFi prompt → Whisper download → offline STT permanently thereafter
-Active branch: feat/whisper-dravidian (pushed, not merged to main)
+- Hindi offline (AiAi hi-IN, downloads silently on first WiFi launch)
+- Telugu/Kannada: Gemma 4 E2B audio encoder, fully offline, no separate download
+Active branch: feat/gemma-audio-stt-exploration (pushed, not merged to main)
 - AiAi on-device STT: en-IN (pre-installed), hi-IN (downloads on first WiFi launch)
-- Whisper-small int8-quantized ONNX: te, ml, kn, ta, bn, gu, mr, ne — fully offline after download
-- GoogleTTSRecognitionService: network path for or, as only (not in Whisper's 99 languages)
-- WiFi-required prompt: NoWifi step in onboarding + AlertDialog in main app
+- Gemma 4 E2B audio encoder: te, ml, kn, ta, bn, gu, mr, ne — fully offline, no extra download
+- GoogleTTSRecognitionService: network path for or, as only
+- WiFi-required prompt: NoWifi step in onboarding + AlertDialog in main app (or/as only)
 - Onboarding: tap-to-speak complete, language-aware TTS voice selection
 - PreparingVoices gates on Gemma model ready + TTS voice testSpeak passing
 - RAG pipeline working end to end with all three knowledge bases
 
-## Whisper ONNX model delivery
-Files are downloaded lazily on first use of a Whisper language (te/ml/kn/ta/bn/gu/mr/ne).
-Download is triggered automatically during onboarding PreparingVoices and gated — the user
-cannot advance to Introduction until both Whisper files and TTS voices are ready.
+## STT for te/ml/kn/ta/bn/gu/mr/ne — Gemma 4 E2B audio encoder
+No separate model download. STT for these 8 languages runs through the same Gemma 4 E2B
+model already loaded for inference via LiteRT-LM.
 
-If models are missing in the main app (fresh install, data cleared), tapping the mic
-triggers an inline download and shows progress in the response text area. User taps mic
-again once complete.
+Pipeline: AudioRecorder (16 kHz mono PCM, VAD hard-capped at 10 s) → floatArrayToBytes()
+wraps samples in a standard 16-bit PCM WAV container → Content.AudioBytes sent on a
+dedicated Conversation (TRANSCRIPTION_SYSTEM_PROMPT, isolated KV cache) → streamed tokens
+collected → plain-string transcript returned → fed into submitQuery() as normal.
 
-Source: onnx-community/whisper-small on HuggingFace (int8-quantized ONNX export)
-  https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/encoder_model_quantized.onnx
-  https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/decoder_model_merged_quantized.onnx
-  https://huggingface.co/onnx-community/whisper-small/resolve/main/tokenizer.json
+Why WAV container: Content.AudioBytes passes bytes to miniaudio which is a file decoder;
+raw PCM without a header causes error code -10. Standard RIFF/WAV (format tag 1, int16) is
+the most compatible format.
 
-Sizes: encoder_model_quantized.onnx ~92 MB, decoder_model_merged_quantized.onnx ~157 MB, tokenizer.json <1 MB
-Total: ~250 MB, downloaded once, stored in filesDir/whisper/, survives app updates
+Why isolated conversation: keeps transcription KV cache separate from the welfare assistant
+conversation so audio processing doesn't bleed into response generation context.
 
-Why whisper-small int8 over whisper-tiny: significantly better accuracy on Dravidian languages.
-Why not fp16: no ORT hardware fp16 acceleration on Snapdragon 6/7 — inference takes ~4 min for 5s audio.
+Max audio: 10 s (AudioRecorder VAD hard cap), well within Gemma encoder's 30 s limit.
 
 ## Known pending items
 - PreparingVoices does not detect WiFi re-enable while polling — user must
@@ -237,7 +236,7 @@ Why not fp16: no ORT hardware fp16 acceleration on Snapdragon 6/7 — inference 
 - Separate translation APIs (Gemma handles multilingual natively)
 - Loading the model from external storage or downloading on first run
 - The .task format — the correct format is .litertlm
-- Per-language fine-tuned whisper-small models (~450 MB each) — stashed on feat/whisper-per-language-finetuned; single shared whisper-small is superior UX
+- Any Whisper-based STT — replaced by Gemma 4 E2B's built-in audio encoder
 
 ## Model
 - Model: Gemma 4 E2B via LiteRT-LM (on-device, offline)
