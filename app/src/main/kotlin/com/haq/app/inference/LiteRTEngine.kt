@@ -259,13 +259,47 @@ class LiteRTEngine(private val context: Context) : InferenceEngine {
      * as expected by the Gemma 4 E2B audio encoder.
      * int16 range [-32768, 32767] → divide by 32768f → float32 [-1, 1].
      */
+    /**
+     * Wraps float32 [-1, 1] samples in a 16-bit PCM WAV container.
+     * Content.AudioBytes passes bytes to miniaudio which is a file decoder —
+     * it requires an encoded audio format (WAV/MP3/FLAC), not raw PCM.
+     * Converting to int16 PCM (format tag 1) gives maximum decoder compatibility.
+     */
     private fun floatArrayToBytes(samples: FloatArray): ByteArray {
+        val sampleRate   = 16_000
+        val numChannels  = 1
+        val bitsPerSample = 16
+        val byteRate     = sampleRate * numChannels * bitsPerSample / 8
+        val blockAlign   = numChannels * bitsPerSample / 8
+        val dataSize     = samples.size * 2          // 2 bytes per int16 sample
         val buffer = ByteBuffer
-            .allocate(samples.size * 4)
+            .allocate(44 + dataSize)
             .order(ByteOrder.LITTLE_ENDIAN)
+
+        // RIFF header
+        buffer.put("RIFF".toByteArray(Charsets.US_ASCII))
+        buffer.putInt(36 + dataSize)                 // file size − 8
+        buffer.put("WAVE".toByteArray(Charsets.US_ASCII))
+
+        // fmt chunk
+        buffer.put("fmt ".toByteArray(Charsets.US_ASCII))
+        buffer.putInt(16)                            // chunk size
+        buffer.putShort(1)                           // PCM format
+        buffer.putShort(numChannels.toShort())
+        buffer.putInt(sampleRate)
+        buffer.putInt(byteRate)
+        buffer.putShort(blockAlign.toShort())
+        buffer.putShort(bitsPerSample.toShort())
+
+        // data chunk
+        buffer.put("data".toByteArray(Charsets.US_ASCII))
+        buffer.putInt(dataSize)
         for (sample in samples) {
-            buffer.putFloat(sample)
+            buffer.putShort(
+                (sample * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+            )
         }
+
         return buffer.array()
     }
 
